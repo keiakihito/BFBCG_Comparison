@@ -88,20 +88,12 @@ float* generateSPD_DenseMatrix(int N){
 
 // N is matrix size
 float* generate_TriDiagMatrix(int N){
-	float* mtx_h = NULL;
-	float* mtx_d = NULL;
-	float* mtxSPD_h = NULL;
-	float* mtxSPD_d = NULL;
-
-	//Using for cublas function
-	const float alpha = 1.0f;
-	const float beta = 0.0f;
 
 	//Allocate memoery in Host
-	mtx_h = (float*)calloc(N*N, sizeof(float));
-	mtxSPD_h = (float*)calloc(N*N, sizeof(float));
+	float* mtx_h = (float*)calloc(N*N, sizeof(float));
 
-	if(! mtx_h || ! mtxSPD_h){
+
+	if(! mtx_h){
 		printf("\nFailed to allocate memory in host\n\n");
 		return NULL;
 	}
@@ -140,7 +132,7 @@ float* generate_TriDiagMatrix(int N){
 
 
 
-void validate(const float *mtxA_h, const float* x_h, float* rhs, int N){
+void validateSol(const float *mtxA_h, const float* x_h, float* rhs, int N){
     float rsum, diff, error = 0.0f;
 
     for (int rw_wkr = 0; rw_wkr < N; rw_wkr++){
@@ -158,6 +150,6 @@ void validate(const float *mtxA_h, const float* x_h, float* rhs, int N){
     
     printf("\n\nTest Summary: Error amount = %f\n", error);
 
-}// end of validate
+}// end of validateSol
 
 #endif // HELPER_FUNCTIONS_H
