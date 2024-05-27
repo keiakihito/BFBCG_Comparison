@@ -22,14 +22,8 @@ void print_vector(const float *d_val, int size) {
     }
     // Print the values to check them
     for (int i = 0; i < size; i++) {
-        if( i < 3){
             printf("%f \n", check_r[i]);
-        }
     }
-    // printf("\n...\n");
-    // printf("%f ", check_r[size-3]);
-    // printf("%f ", check_r[size-2]);
-    // printf("%f ", check_r[size-1]);
     
 
     // Free allocated memory
@@ -38,7 +32,7 @@ void print_vector(const float *d_val, int size) {
 
 void print_vector(const int *d_val, int size) {
     // Allocate memory on the host
-    float *check_r = (float *)malloc(sizeof(float) * size);
+    int *check_r = (int*)malloc(sizeof(int) * size);
 
     if (check_r == NULL) {
         printf("Failed to allocate host memory");
@@ -54,24 +48,22 @@ void print_vector(const int *d_val, int size) {
     }
     // Print the values to check them
     for (int i = 0; i < size; i++) {
-        if( i < 3){
             printf("%d \n", check_r[i]);
-        }
     }
-    // printf("\n...\n");
-    // printf("%f ", check_r[size-3]);
-    // printf("%f ", check_r[size-2]);
-    // printf("%f ", check_r[size-1]);
+
     
 
     // Free allocated memory
     free(check_r);
 }// end of print_vector
 
+
+
+
 //N is row and cloumn size 
-void print_mtx(const float *d_val, int N, int size){
+void print_mtx_d(const float *d_val, int numOfRow, int numOfClm){
     //Allocate memory oh the host
-    float *check_r = (float *)malloc(sizeof(float) * size);
+    float *check_r = (float *)malloc(sizeof(float) * numOfRow * numOfClm);
 
     if (check_r == NULL) {
         printf("Failed to allocate host memory");
@@ -79,25 +71,35 @@ void print_mtx(const float *d_val, int N, int size){
     }
 
     // Copy data from device to host
-    cudaError_t err = cudaMemcpy(check_r, d_val, size * sizeof(float), cudaMemcpyDeviceToHost);
+    cudaError_t err = cudaMemcpy(check_r, d_val, numOfRow * numOfClm * sizeof(float), cudaMemcpyDeviceToHost);
     if (err != cudaSuccess) {
         printf("cudaMemcpy failed: %s\n", cudaGetErrorString(err));
         free(check_r);
         return;
     }
 
-    // Print the values to check them
-    for (int i = 0; i < size; i++) {
-        if( i % N == 0 && i != 0){
-            printf("\n");
-        }
-        printf("%f ", check_r[i]);
-    }
+    for (int rwWkr = 0; rwWkr < numOfRow; rwWkr++){
+        for(int clWkr = 0; clWkr < numOfClm; clWkr++){
+            printf("%f ", check_r[rwWkr*numOfClm + clWkr]);
+        }// end of column walker
+        printf("\n");
+    }// end of row walker
+
     printf("\n\n");
 
     // Free allocated memory
     free(check_r);
 } // end of print_mtx
+
+void print_mtx_h(const float *mtx_h, int numOfRow, int numOfClm){
+    for (int rwWkr = 0; rwWkr < numOfRow; rwWkr++){
+        for(int clWkr = 0; clWkr < numOfClm; clWkr++){
+            printf("%f ", mtx_h[rwWkr*numOfClm + clWkr]);
+        }// end of column walker
+        printf("\n");
+    }// end of row walker
+} // end of print_mtx_h
+
 
 void validate(const float *mtxA_h, const float* x_h, float* rhs, int N){
     float rsum, diff, error = 0.0f;
