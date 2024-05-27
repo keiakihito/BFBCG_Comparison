@@ -40,10 +40,6 @@ float denseMtxB[] = {
 
 
 
-
-
-
-
 // Time tracker for each iteration
 double myCPUTimer()
 {
@@ -60,7 +56,7 @@ int main(int argc, char** argv)
     // double startTime, endTime;
     int row[] = {0, 2, 5, 8, 11, 13};
     int col[] = {0, 1, 0, 1, 2, 1, 2, 3, 2, 3, 4, 3, 4};
-    float val[] = {10, 1, 1, 20, 1, 1, 30, 1, 1, 40, 1, 1, 50};
+    float val[] = {10.0, 1.0, 1.0, 20.0, 1.0, 1.0, 30.0, 1.0, 1.0, 40.0, 1.0, 1.0, 50.0};
 
     //For sparse matrix A
     int numRows = 5;
@@ -71,17 +67,24 @@ int main(int argc, char** argv)
     int numRows_B = 5;
     int numCols_B = 3;
 
+    float alpha = 1.0;
+    float beta = 0.0;
+
     //(1) Allocate device memory
     int *row_d = NULL;
     int *col_d = NULL;
     float *val_d = NULL;
 
     float *dnsMtxB_d = NULL;
-    float *dnsMtxAB_d = NULL;// Result
+    float *dnsMtxAB_h = NULL;// Result in host
+    float *dnsMtxAB_d = NULL;// Result in device
+
+    bool debug = false;
 
     CHECK(cudaMalloc((void**)&row_d, (numRows+1) * sizeof(int)));
-    CHECK(cudaMalloc((void**)&col_d, numCols * sizeof(int)));
+    CHECK(cudaMalloc((void**)&col_d, nnz * sizeof(int)));
     CHECK(cudaMalloc((void**)&val_d, nnz * sizeof(float)));
+    
 
     CHECK(cudaMalloc((void**)&dnsMtxB_d, numRows_B * numCols_B * sizeof(float)));
     CHECK(cudaMalloc((void**)&dnsMtxAB_d, numRows * numCols_B * sizeof(float)));
@@ -89,23 +92,94 @@ int main(int argc, char** argv)
 
     //(2) Copy value to device
     CHECK(cudaMemcpy(row_d, row, (numRows+1) *sizeof(int), cudaMemcpyHostToDevice));
-    CHECK(cudaMemcpy(col_d, col, numCols * sizeof(int), cudaMemcpyHostToDevice));
-    CHECK(cudaMemcpy(val_d, val, nnz * sizeof(int), cudaMemcpyHostToDevice));
+    CHECK(cudaMemcpy(col_d, col, nnz * sizeof(int), cudaMemcpyHostToDevice));
+    CHECK(cudaMemcpy(val_d, val, nnz * sizeof(float), cudaMemcpyHostToDevice));
+
+    debug = false;
+    if(debug){
+        printf("\n\nrow vector \n");
+        print_vector(row_d, numRows+1);
+        printf("\n\ncol vector \n");
+        print_vector(col_d, nnz);
+        printf("\n\nval vector \n");
+        print_vector(val_d, nnz);
+    }
+    debug = false;
+
 
     CHECK(cudaMemcpy(dnsMtxB_d, denseMtxB, numRows_B * numCols_B * sizeof(float), cudaMemcpyHostToDevice));
-    
+    // print_mtx_d(dnsMtxB_d, numRows_B, numCols_B);   
+    // print_mtx_d(dnsMtxAB_d, numRows, numCols_B);    
 
     //(3) Create cuspare handle and descreptors
     cusparseSpMatDescr_t mtxA_dscr;
     cusparseDnMatDescr_t mtxB_dscr, mtxC_dscr;
 
+    cusparseHandle_t cusparseHandle;
+    cusparseCreate(&cusparseHandle);
+
+    
     checkCudaErrors(cusparseCreateCsr(&mtxA_dscr, numRows, numCols, nnz, row_d, col_d, val_d,CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I, CUSPARSE_INDEX_BASE_ZERO, CUDA_R_32F));
-    checkCudaErrors(cusparseCreateDnMat(&mtxB_dscr, numRows_B, numCols_B, numRows_B, dnsMtxB_d, CUDA_R_32F, CUSPARSE_ORDER_ROW));
-    checkCudaErrors(cusparseCreateDnMat(&mtxC_dscr, numRows, numCols_B, numRows, dnsMtxAB_d, CUDA_R_32F, CUSPARSE_ORDER_ROW));
+    //Note Given the marix is row major order (CUSPARSE_ORDER_ROW), the leading dimension is number of column.
+    checkCudaErrors(cusparseCreateDnMat(&mtxB_dscr, numRows_B, numCols_B, numCols_B, dnsMtxB_d, CUDA_R_32F, CUSPARSE_ORDER_ROW));
+    checkCudaErrors(cusparseCreateDnMat(&mtxC_dscr, numRows, numCols_B, numCols_B, dnsMtxAB_d, CUDA_R_32F, CUSPARSE_ORDER_ROW));
+    
+    debug = false;
+    if(debug){
+        printf("\n\nrow vector \n");
+        print_vector(row_d, numRows+1);
+        printf("\n\ncol vector \n");
+        print_vector(col_d, nnz);
+        printf("\n\nval vector \n");
+        print_vector(val_d, nnz);
+
+        printf("\n\ndnsMtxB\n");
+        print_mtx_d(dnsMtxB_d, numRows_B, numCols_B);
+        printf("\n\ndnsMtxAB\n");
+        print_mtx_d(dnsMtxAB_d, numRows, numCols_B);   
+    }
+    debug = false;
+
+ 
 
     //(4) Computer sparse-dense matrix multiplication
 
+    //Need to allocate buffer for cusparseSpMM
+    size_t bufferSize = 0;
+    void* dBuffer = NULL;
+    checkCudaErrors(cusparseSpMM_bufferSize(cusparseHandle, CUSPARSE_OPERATION_NON_TRANSPOSE,CUSPARSE_OPERATION_NON_TRANSPOSE,
+    &alpha, mtxA_dscr, mtxB_dscr, &beta, mtxC_dscr, CUDA_R_32F, CUSPARSE_SPMM_ALG_DEFAULT, &bufferSize));
 
+    CHECK(cudaMalloc(&dBuffer, bufferSize));
+
+    //Perform sparse * dense matrix operaroin
+    checkCudaErrors(cusparseSpMM(cusparseHandle, CUSPARSE_OPERATION_NON_TRANSPOSE, CUSPARSE_OPERATION_NON_TRANSPOSE,
+    &alpha, mtxA_dscr, mtxB_dscr, &beta, mtxC_dscr, CUDA_R_32F, CUSPARSE_SPMM_ALG_DEFAULT, dBuffer));
+
+
+  
+
+    // (5) Copy back the result to host
+    dnsMtxAB_h = (float*)malloc(sizeof(float)* numRows * numCols_B);
+    CHECK(cudaMemcpy(dnsMtxAB_h, dnsMtxAB_d, sizeof(float)*(numRows * numCols_B), cudaMemcpyDeviceToHost));
+
+    printf("\n\n~~Check sprMtxA * dnsMtxB~~\n");
+    print_mtx_h(dnsMtxAB_h, numRows, numCols_B);
+
+    //(6) Free pointers
+    checkCudaErrors(cusparseDestroySpMat(mtxA_dscr));
+    checkCudaErrors(cusparseDestroyDnMat(mtxB_dscr));
+    checkCudaErrors(cusparseDestroyDnMat(mtxC_dscr));
+    checkCudaErrors(cusparseDestroy(cusparseHandle));
+
+    CHECK(cudaFree(dBuffer));
+    CHECK(cudaFree(row_d));
+    CHECK(cudaFree(col_d));
+    CHECK(cudaFree(val_d));
+    CHECK(cudaFree(dnsMtxB_d));
+    CHECK(cudaFree(dnsMtxAB_d));
+    
+    free(dnsMtxAB_h);
 
     return 0;
 } // end of main
