@@ -4,6 +4,7 @@
 #include <iostream>
 #include <cuda_runtime.h>
 
+//Print vector loat
 void print_vector(const float *d_val, int size) {
     // Allocate memory on the host
     float *check_r = (float *)malloc(sizeof(float) * size);
@@ -30,6 +31,8 @@ void print_vector(const float *d_val, int size) {
     free(check_r);
 } // print_vector
 
+
+//Print vector integer
 void print_vector(const int *d_val, int size) {
     // Allocate memory on the host
     int *check_r = (int*)malloc(sizeof(int) * size);
@@ -51,7 +54,6 @@ void print_vector(const int *d_val, int size) {
             printf("%d \n", check_r[i]);
     }
 
-    
 
     // Free allocated memory
     free(check_r);
@@ -59,9 +61,8 @@ void print_vector(const int *d_val, int size) {
 
 
 
-
-//N is row and cloumn size 
-void print_mtx_d(const float *d_val, int numOfRow, int numOfClm){
+//Print matrix row major
+void print_mtx_row_d(const float *mtx_d, int numOfRow, int numOfClm){
     //Allocate memory oh the host
     float *check_r = (float *)malloc(sizeof(float) * numOfRow * numOfClm);
 
@@ -71,7 +72,7 @@ void print_mtx_d(const float *d_val, int numOfRow, int numOfClm){
     }
 
     // Copy data from device to host
-    cudaError_t err = cudaMemcpy(check_r, d_val, numOfRow * numOfClm * sizeof(float), cudaMemcpyDeviceToHost);
+    cudaError_t err = cudaMemcpy(check_r, mtx_d, numOfRow * numOfClm * sizeof(float), cudaMemcpyDeviceToHost);
     if (err != cudaSuccess) {
         printf("cudaMemcpy failed: %s\n", cudaGetErrorString(err));
         free(check_r);
@@ -84,17 +85,52 @@ void print_mtx_d(const float *d_val, int numOfRow, int numOfClm){
         }// end of column walker
         printf("\n");
     }// end of row walker
+} // end of print_mtx_h
 
-    printf("\n\n");
 
-    // Free allocated memory
-    free(check_r);
-} // end of print_mtx
+//Print matrix column major
+void print_mtx_clm_d(const float *mtx_d, int numOfRow, int numOfClm){
+    //Allocate memory oh the host
+    float *check_r = (float *)malloc(sizeof(float) * numOfRow * numOfClm);
 
-void print_mtx_h(const float *mtx_h, int numOfRow, int numOfClm){
+    if (check_r == NULL) {
+        printf("Failed to allocate host memory");
+        return;
+    }
+
+    // Copy data from device to host
+    cudaError_t err = cudaMemcpy(check_r, mtx_d, numOfRow * numOfClm * sizeof(float), cudaMemcpyDeviceToHost);
+    if (err != cudaSuccess) {
+        printf("cudaMemcpy failed: %s\n", cudaGetErrorString(err));
+        free(check_r);
+        return;
+    }
+
+    for (int rwWkr = 0; rwWkr < numOfRow; rwWkr++){
+        for(int clWkr = 0; clWkr < numOfClm; clWkr++){
+            printf("%f ", check_r[clWkr*numOfRow + rwWkr]);
+        }// end of column walker
+        printf("\n");
+    }// end of row walker
+} // end of print_mtx_h
+
+
+//Print matrix row major
+void print_mtx_row_h(const float *mtx_h, int numOfRow, int numOfClm){
     for (int rwWkr = 0; rwWkr < numOfRow; rwWkr++){
         for(int clWkr = 0; clWkr < numOfClm; clWkr++){
             printf("%f ", mtx_h[rwWkr*numOfClm + clWkr]);
+        }// end of column walker
+        printf("\n");
+    }// end of row walker
+} // end of print_mtx_h
+
+
+//Print matrix column major
+void print_mtx_clm_h(const float *mtx_h, int numOfRow, int numOfClm){
+    for (int rwWkr = 0; rwWkr < numOfRow; rwWkr++){
+        for(int clWkr = 0; clWkr < numOfClm; clWkr++){
+            printf("%f ", mtx_h[clWkr*numOfRow + rwWkr]);
         }// end of column walker
         printf("\n");
     }// end of row walker
