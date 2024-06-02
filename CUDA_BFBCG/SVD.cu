@@ -30,12 +30,14 @@
 //Bigger size matrix
 
 
-// Define the dense matrixB
-float mtxA[] = {
-    1.0, 1.0,
-    0.0, 1.0, 
-    1.0, 0.0
-};
+/*
+        |1.0 1.0|
+mtxA =  |0.0 1.0|
+        |1.0 0.0|
+*/
+
+// Define the dense matrixB column major
+float mtxA[] = { 1.0, 0.0, 1.0, 1.0, 1.0, 0.0};
 
 #define ROW_A 3 
 #define COL_A 2
@@ -53,26 +55,29 @@ double myCPUTimer()
     return ((double)tp.tv_sec + (double)tp.tv_usec/1.0e6);
 }
 
+
+
+
 int main(int argc, char** argv){
 
     //FIXME: It excutes, but the value are wrong.😫😫😫
 
     //(1) Allocate device memory
-    float *mtxA_d = NULL;
-    float *mtxU_d = NULL;
-    float *mtxD_d = NULL; // Singular values
-    float *mtxVT_d = NULL;
+    float *mtxA_d = nullptr;
+    float *mtxU_d = nullptr;
+    float *mtxD_d = nullptr; // Singular values
+    float *mtxVT_d = nullptr;
 
     /*The devInfo is an integer pointer
     It points to device memory where cuSOLVER can store information 
     about the success or failure of the computation.*/
-    int *devInfo = NULL;
+    int *devInfo = nullptr;
 
     int lwork = 0;//Size of workspace
     //work_d is a pointer to device memory that serves as the workspace for the computation
     //Then passed to the cuSOLVER function performing the computation.
-    float *work_d = NULL; // 
-    float *rwork_d = NULL; // Place holder
+    float *work_d = nullptr; // 
+    float *rwork_d = nullptr; // Place holder
 
 
     //Specifies options for computing all or part of the matrix U: = ‘A’: 
@@ -87,9 +92,9 @@ int main(int argc, char** argv){
 
     CHECK((cudaMalloc((void**)&mtxA_d, ROW_A * COL_A *sizeof(float))));
     // Set up size of matrix U which is 3 by 3 for Full SVD
-    CHECK((cudaMalloc((void**)&mtxU_d, LD_A * ROW_A * sizeof(float))));
+    CHECK((cudaMalloc((void**)&mtxU_d, LD_A * COL_A * sizeof(float))));
     CHECK((cudaMalloc((void**)&mtxD_d, COL_A * sizeof(float))));
-    CHECK((cudaMalloc((void**)&mtxVT_d, LD_A * COL_A * sizeof(float))));
+    CHECK((cudaMalloc((void**)&mtxVT_d, COL_A * COL_A * sizeof(float))));
     //Should be the same size of VT in this case 2 by 2
     // CHECK((cudaMalloc((void**)&mtxTemp_d, LD_A * COL_A * sizeof(float))));
     CHECK((cudaMalloc((void**)&devInfo, sizeof(int))));
@@ -98,16 +103,16 @@ int main(int argc, char** argv){
     //(2) Copy value to device
     CHECK((cudaMemcpy(mtxA_d, mtxA, ROW_A * COL_A * sizeof(float), cudaMemcpyHostToDevice)));
 
-    debug = false;
+    debug = true;
     if(debug){
         printf("\n\n~~~MtxA~~\n");
-        print_mtx_d(mtxA_d, ROW_A, COL_A);
+        print_mtx_clm_d(mtxA_d, ROW_A, COL_A);
     }
     debug = false;
 
     //(3) Create handler
-    cusolverDnHandle_t cusolverHandler = NULL;
-    cublasHandle_t cublasHandler = NULL;
+    cusolverDnHandle_t cusolverHandler = nullptr;
+    cublasHandle_t cublasHandler = nullptr;
 
     checkCudaErrors(cusolverDnCreate(&cusolverHandler));
     checkCudaErrors(cublasCreate(&cublasHandler));
@@ -116,18 +121,21 @@ int main(int argc, char** argv){
     CHECK(cudaMalloc((void**)&work_d, lwork * sizeof(float)));
 
     //(4) Compute SVD decomposition
-    checkCudaErrors(cusolverDnSgesvd(cusolverHandler, jobU, jobVT, ROW_A, COL_A, mtxA_d, LD_A, mtxD_d, mtxU_d,LD_A, mtxVT_d, LD_A, work_d, lwork, rwork_d, devInfo));
+    checkCudaErrors(cusolverDnSgesvd(cusolverHandler, jobU, jobVT, ROW_A, COL_A, mtxA_d, LD_A, mtxD_d, mtxU_d,LD_A, mtxVT_d, COL_A, work_d, lwork, rwork_d, devInfo));
 
     debug = true;
     if(debug){
         printf("\n\n~~mtxU_d\n");
-        print_mtx_d(mtxU_d, ROW_A, COL_A);
+        print_mtx_clm_d(mtxU_d, ROW_A, COL_A);
         printf("\n\n~~mtxD_d\n");
-        print_mtx_d(mtxD_d, COL_A, 1);
+        print_mtx_clm_d(mtxD_d, COL_A, 1);
         printf("\n\n~~mtxVT_d\n");
-        print_mtx_d(mtxVT_d, COL_A, COL_A);
+        print_mtx_clm_d(mtxVT_d, COL_A, COL_A);
     }
     debug = false;
+
+
+
 
     checkCudaErrors(cusolverDnDestroy(cusolverHandler));
     checkCudaErrors(cublasDestroy(cublasHandler));
