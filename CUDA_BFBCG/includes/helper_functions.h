@@ -219,9 +219,35 @@ void validateSol(const float *mtxA_h, const float* x_h, float* rhs, int N){
 
 //Stop condition
 //TO DO implement and test isStop, inverse, and sparseMul
-bool isStop(float *mtxR, int numOfRow, int numOfClm)
+//Input: cublasHandle_t cublasHandler, float* matrix Residual, int number of row, int number of column
+//Process: Extracts the first column vector from the residual matrix,
+// 			Calculate dot product of the first column vector, then compare sqare root of dot product with Threashold
+bool checkStop(cublasHandle_t cublasHandler, float *mtxR_d, int numOfRow, int numOfClm, float const threshold)
 {
-	return false;
+	float* r1_d = NULL;
+	float dotPrdct = 0.0f;
+	bool debug =false;
+
+	//Extract first column
+	CHECK(cudaMalloc((void**)&r1_d, numOfRow * sizeof(float)));
+	CHECK(cudaMemcpy(r1_d, mtxR_d, numOfRow * sizeof(float), cudaMemcpyDeviceToDevice));
+
+	if(debug){
+		printf("\n\nvector r_1: \n");
+		print_vector(r1_d, numOfRow);
+	}
+	
+	//Dot product of r_{1}' * r_{1}, cublasSdot
+	checkCudaErrors(cublasSdot(cublasHandler, numOfRow, r1_d, 1, r1_d, 1, &dotPrdct));
+
+	//Square root(dotPrdct)
+	if(debug){
+		printf("\n\ndot product of r_1: %.10f\n", dotPrdct);
+		printf("\n\nsqrt(dot product of r_1): %.10f\n", sqrt(dotPrdct));
+		printf("\n\nTHRESHOLD : %f\n", threshold);
+	}
+
+	return (sqrt(dotPrdct)< threshold);
 }
 
 //Inverse
