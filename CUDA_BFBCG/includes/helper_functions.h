@@ -31,6 +31,28 @@ float* generate_TriDiagMatrix(int N);
 
 void validateSol(const float *mtxA_h, const float* x_h, float* rhs, int N);
 
+//Input: cublasHandle_t cublasHandler, float* matrix Residual, int number of row, int number of column
+//Process: Extracts the first column vector from the residual matrix,
+// 			Calculate dot product of the first column vector, then compare sqare root of dot product with Threashold
+//Output: boolean
+bool checkStop(cublasHandle_t cublasHandler, float *mtxR_d, int numOfRow, int numOfClm, float const threshold);
+
+//Input: float* identity matrix, int numer of Row, Column
+//Process: Creating identity matrix with number of N
+//Output: float* mtxI
+__global__ void identity_matrix(float* mtxI_d, int N);
+
+//Input: float* identity matrix, int N, which is numer of Row or Column
+//Process: Call the kernel to create identity matrix with number of N
+//Output: float* mtxI
+void createIdentityMtx(float* mtxI_d, int N);
+
+
+
+
+
+
+
 //Input: float* mtxZ, int number of Row, int number Of column, int & currentRank
 //Process: the function extracts orthonormal set from the matrix Z
 //Output: float* mtxY_hat, the orthonormal set of matrix Z.
@@ -251,6 +273,46 @@ bool checkStop(cublasHandle_t cublasHandler, float *mtxR_d, int numOfRow, int nu
 }
 
 //Inverse
+//Input: float* identity matrix, int numer of Row, Column
+//Process: Creating identity matrix with number of N
+//Output: float* mtxI
+__global__ void identity_matrix(float* mtxI_d, int N)
+{	
+	//Get global index 
+	int idx = threadIdx.x + blockIdx.x * blockDim.x;
+	
+	//Set boundry condition
+	if(idx < (N * N)){
+		int glbRow = idx / N;
+		int glbClm = idx % N;
+
+		// Index points to the diagonal element
+		if(glbRow == glbClm){
+			mtxI_d[idx] = 1.0f;
+		}else{
+			mtxI_d[idx] = 0.0f;
+		}// end of if, store diagonal element
+
+	} // end of if, boundtry condition
+
+}// end of identity_matrix
+
+
+//Input: float* identity matrix, int N, which is numer of Row or Column
+//Process: Call the kernel to create identity matrix with number of N
+//Output: float* mtxI
+void createIdentityMtx(float* mtxI_d, int N)
+{		
+
+	// Use a 1D block and grid configuration
+    int blockSize = 1024; // Number of threads per block
+    int gridSize = ceil((float)N * N / blockSize); // Number of blocks needed
+
+    identity_matrix<<<gridSize, blockSize>>>(mtxI_d, N);
+    
+	cudaDeviceSynchronize(); // Ensure the kernel execution completes before proceeding
+}
+
 
 //Sparse matrix multiplicatation
 
@@ -616,10 +678,7 @@ float* truncate_Den_Mtx(float* mtxV_d, int numOfN, int currentRank)
 //Output: float* mtxY_d, which will be updated as normalized matrix Y hat.
 void normalize_Den_Mtx(float* mtxY_d, int numOfRow, int numOfCol)
 {		
-	// dim3 blockDim(32, 32);
-	// dim3 gridDim(ceil((float)numOfCol / blockDim.x), ceil((float)numOfRow/blockDim.y));
-	// normalizeClmVec<<<gridDim, blockDim>>>(mtxY_d, numOfRow, numOfCol);
-	
+
 	// Use a 1D block and grid configuration
     int blockSize = 1024; // Number of threads per block
     int gridSize = ceil((float)numOfCol / blockSize); // Number of blocks needed
