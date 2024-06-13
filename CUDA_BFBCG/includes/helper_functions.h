@@ -3,6 +3,7 @@
 
 #include <iostream>
 #include <cuda_runtime.h>
+#include <cusolverDn.h>
 #include <cublas_v2.h>
 #include <cstdlib>
 #include <cmath>
@@ -111,8 +112,23 @@ __global__ void normalizeClmVec(float* mtxY_d, int numOfRow, int numOfCol);
 void normalize_Den_Mtx(float* mtxY_d, int numOfRow, int numOfCol);
 
 
+//Input: float* matrix A, int number of Row, int number Of Column
+//Process: Compute condition number and check whther it is ill-conditioned or not.
+//Output: float condition number
+float computeConditionNumber(float* mtxA_d, int numOfRow, int numOfClm);
 
-//Function signatures
+//Input: cusolverDnHandle_t cusolverHandler, int number of row, int number of column, int leading dimension, float* matrix A
+//Process: Extract eigenvalues with full SVD
+//Output: float* sngVals_d, singular values in device in column vector
+float* extractSngVals(cusolverDnHandle_t cusolverHandler, int numOfRow, int numOfClm, int ldngDim, float* mtxA_d);
+
+
+
+
+
+
+
+// = = = Function signatures = = = = 
 //Generate random SPD dense matrix
 // N is matrix size
 float* generateSPD_DenseMatrix(int N){
@@ -314,6 +330,7 @@ void inverse_Den_Mtx(cusolverDnHandle_t cusolverHandler, float* mtxA_d, float* m
 	//(1) Make copy of mtxA
 	CHECK(cudaMalloc((void**)&mtxA_cpy_d, N * N * sizeof(float)));
 	CHECK(cudaMemcpy(mtxA_cpy_d, mtxA_d, N * N * sizeof(float), cudaMemcpyDeviceToDevice));
+	
 	if(debug){
 		printf("\n\n~~mtxA_cpy_d~~\n\n");
 		print_mtx_clm_d(mtxA_cpy_d, N, N);
@@ -329,10 +346,24 @@ void inverse_Den_Mtx(cusolverDnHandle_t cusolverHandler, float* mtxA_d, float* m
 	//(3)Calculate work space for cusolver
     checkCudaErrors(cusolverDnSgetrf_bufferSize(cusolverHandler, N, N, mtxA_cpy_d, N, &lwork));
     checkCudaErrors(cudaMalloc((void**)&work_d, lwork * sizeof(float)));
+	CHECK(cudaMalloc((void**)&devInfo, sizeof(int)));
+    CHECK(cudaMalloc((void**)&pivots_d, N * sizeof(int)));
 
 	//(4.1) Perform the LU decomposition, 
     checkCudaErrors(cusolverDnSgetrf(cusolverHandler, N, N, mtxA_cpy_d, N, work_d, pivots_d, devInfo));
     cudaDeviceSynchronize();
+
+	//Check LU decomposition was successful or not.
+	int devInfo_h;
+	checkCudaErrors(cudaMemcpy(&devInfo_h, devInfo, sizeof(int), cudaMemcpyDeviceToHost));
+	if(devInfo_h != 0){
+		printf("\n\nLU decomposition failed in the inverse_Den_Mtx, info = %d\n", devInfo_h);
+		if(devInfo_h == 11){
+			printf(": The matrix potentially is ill-conditioned or singular.\n\n");
+		}
+		exit(1);
+	}
+
 
     /*
     mtxA_d will be a compact form such that 
@@ -362,6 +393,13 @@ void inverse_Den_Mtx(cusolverDnHandle_t cusolverHandler, float* mtxA_d, float* m
     */
     checkCudaErrors(cusolverDnSgetrs(cusolverHandler, CUBLAS_OP_N, N, N, mtxA_cpy_d, N, pivots_d, mtxA_inv_d, N, devInfo));
 	cudaDeviceSynchronize();
+
+	//Check solver after LU decomposition was successful or not.
+	checkCudaErrors(cudaMemcpy(&devInfo_h, devInfo, sizeof(int), cudaMemcpyDeviceToHost));
+	if(devInfo_h != 0){
+		printf("Solve after LU failed, info = %d\n", devInfo_h);
+		exit(1);
+	}
 
 
 	//(5)Free memoery
@@ -787,6 +825,135 @@ void normalize_Den_Mtx(float* mtxY_d, int numOfRow, int numOfCol)
     
 	cudaDeviceSynchronize(); // Ensure the kernel execution completes before proceeding
 }
+
+
+//Input: float* matrix A, int number of Row, int number Of Column
+//Process: Compute condition number and check whther it is ill-conditioned or not.
+//Output: float condition number
+float computeConditionNumber(float* mtxA_d, int numOfRow, int numOfClm)
+{
+	bool debug = true;
+
+	//Create handler
+    cusolverDnHandle_t cusolverHandler = NULL;
+    checkCudaErrors(cusolverDnCreate(&cusolverHandler));
+
+	float* sngVals_d = extractSngVals(cusolverHandler, numOfRow, numOfClm, numOfRow, mtxA_d);
+	if(debug){
+		printf("\n\nsngVals_d\n\n");
+		print_vector(sngVals_d, numOfClm);
+	}
+
+	float* sngVals_h = (float*)malloc(numOfClm * sizeof(float));
+	CHECK(cudaMemcpy(sngVals_h, sngVals_d, numOfClm * sizeof(float), cudaMemcpyDeviceToHost));
+	float conditionNum = sngVals_h[0] / sngVals_h[numOfClm-1];
+	
+	checkCudaErrors(cusolverDnDestroy(cusolverHandler));
+	CHECK(cudaFree(sngVals_d));
+	free(sngVals_h);
+	
+	return conditionNum;
+
+} // end of computeConditionNumber
+
+
+
+//Input: cusolverDnHandle_t cusolverHandler, int number of row, int number of column, int leading dimension, float* matrix A
+//Process: Extract eigenvalues with full SVD
+//Output: float* sngVals_d, singular values in device in column vector
+float* extractSngVals(cusolverDnHandle_t cusolverHandler, int numOfRow, int numOfClm, int ldngDim, float* mtxA_d)
+{
+	
+	float *mtxA_cpy_d = NULL; // Need a copy to tranpose mtxZ'
+
+	float *mtxU_d = NULL;
+	float *sngVals_d = NULL;
+	float *mtxVT_d = NULL;
+
+
+	/*The devInfo is an integer pointer
+    It points to device memory where cuSOLVER can store information 
+    about the success or failure of the computation.*/
+    int *devInfo = NULL;
+
+    int lwork = 0;//Size of workspace
+    //work_d is a pointer to device memory that serves as the workspace for the computation
+    //Then passed to the cuSOLVER function performing the computation.
+    float *work_d = NULL; // 
+    float *rwork_d = NULL; // Place holder
+    
+
+    //Specifies options for computing all or part of the matrix U: = ‘A’: 
+    //all m columns of U are returned in array
+    signed char jobU = 'A';
+
+    //Specifies options for computing all or part of the matrix V**T: = ‘A’: 
+    //all N rows of V**T are returned in the array
+    signed char jobVT = 'A';
+
+	//Error cheking after performing SVD decomp
+	int infoGpu = 0;
+
+	bool debug = false;
+
+
+	if(debug){
+		printf("\n\n~~mtxA~~\n\n");
+		print_mtx_clm_d(mtxA_d, numOfRow, numOfClm);
+	}
+
+
+	//(1) Allocate memeory in device
+	//Make a copy of mtxZ for mtxZ'
+    CHECK(cudaMalloc((void**)&mtxA_cpy_d, numOfRow * numOfClm * sizeof(float)));
+
+	//For SVD decomposition
+	CHECK(cudaMalloc((void**)&mtxU_d, numOfRow * numOfClm * sizeof(float)));
+	CHECK(cudaMalloc((void**)&sngVals_d, numOfClm * sizeof(float)));
+	CHECK(cudaMalloc((void**)&mtxVT_d, numOfClm * numOfClm * sizeof(float)));
+
+	//(2) Copy value to device
+	CHECK(cudaMemcpy(mtxA_cpy_d, mtxA_d, numOfRow * numOfClm * sizeof(float), cudaMemcpyDeviceToDevice));
+	
+	
+	if(debug){
+		printf("\n\n~~mtxA cpy~~\n\n");
+		print_mtx_clm_d(mtxA_cpy_d, numOfRow, numOfClm);
+	}
+
+
+	//(4) Calculate workspace for SVD decompositoin
+	checkCudaErrors(cusolverDnSgesvd_bufferSize(cusolverHandler, numOfRow, numOfClm, &lwork));
+    CHECK(cudaMalloc((void**)&work_d, lwork * sizeof(float)));
+	CHECK((cudaMalloc((void**)&devInfo, sizeof(int))));
+
+    //(3) Compute SVD decomposition
+    checkCudaErrors(cusolverDnSgesvd(cusolverHandler, jobU, jobVT, numOfRow, numOfClm, mtxA_cpy_d, ldngDim, sngVals_d, mtxU_d,ldngDim, mtxVT_d, numOfClm, work_d, lwork, rwork_d, devInfo));
+	
+	//(4) Check SVD decomp was successful. 
+	checkCudaErrors(cudaMemcpy(&infoGpu, devInfo, sizeof(int), cudaMemcpyDeviceToHost));
+	if(infoGpu != 0){
+		printf("\n\n😖😖😖Unsuccessful SVD execution😖😖😖\n");
+	}
+
+	// if(debug){
+	// 	printf("\n\n~~sngVals_d~~\n\n");
+	// 	print_mtx_clm_d(sngVals_d, numOfClm, numOfClm);
+	// }
+
+	//(5) Free memoery
+	checkCudaErrors(cudaFree(work_d));
+	checkCudaErrors(cudaFree(devInfo));
+	checkCudaErrors(cudaFree(mtxA_cpy_d));
+	checkCudaErrors(cudaFree(mtxU_d));
+	checkCudaErrors(cudaFree(mtxVT_d));
+
+
+	return sngVals_d;
+
+} // end of extractSngVals
+
+
 
 
 #endif // HELPER_FUNCTIONS_H

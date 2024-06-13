@@ -23,7 +23,7 @@ void print_vector(const float *d_val, int size) {
     }
     // Print the values to check them
     for (int i = 0; i < size; i++) {
-            printf("%f \n", check_r[i]);
+            printf("%.10f \n", check_r[i]);
     }
     
 
