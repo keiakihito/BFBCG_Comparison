@@ -305,19 +305,25 @@ void inverse_Den_Mtx(cusolverDnHandle_t cusolverHandler, float* mtxA_d, float* m
     int lwork = 0;
 	bool debug = true;
 
-	//(1) Make copy of mtxPTQ_d
+
+    if(debug){
+        printf("\n\n~~mtxA_d~~\n\n");
+        print_mtx_clm_d(mtxA_d, N, N);
+    }
+
+	//(1) Make copy of mtxA
 	CHECK(cudaMalloc((void**)&mtxA_cpy_d, N * N * sizeof(float)));
 	CHECK(cudaMemcpy(mtxA_cpy_d, mtxA_d, N * N * sizeof(float), cudaMemcpyDeviceToDevice));
 	if(debug){
 		printf("\n\n~~mtxA_cpy_d~~\n\n");
-		print_mtx_clm_h(mtxA_cpy_d, N, N);
+		print_mtx_clm_d(mtxA_cpy_d, N, N);
 	}
 
 	//(2) Create Identity matrix
 	createIdentityMtx(mtxA_inv_d, N);
 	if(debug){
 		printf("\n\n~~mtxI~~\n\n");
-		print_mtx_clm_h(mtxA_cpy_d, N, N);
+		print_mtx_clm_d(mtxA_inv_d, N, N);
 	}
 
 	//(3)Calculate work space for cusolver
