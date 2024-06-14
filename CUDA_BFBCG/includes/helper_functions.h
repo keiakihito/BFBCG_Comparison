@@ -354,12 +354,19 @@ void inverse_Den_Mtx(cusolverDnHandle_t cusolverHandler, float* mtxA_d, float* m
     cudaDeviceSynchronize();
 
 	//Check LU decomposition was successful or not.
+	//If not, it can be ill-conditioned or singular.
 	int devInfo_h;
 	checkCudaErrors(cudaMemcpy(&devInfo_h, devInfo, sizeof(int), cudaMemcpyDeviceToHost));
 	if(devInfo_h != 0){
 		printf("\n\nLU decomposition failed in the inverse_Den_Mtx, info = %d\n", devInfo_h);
 		if(devInfo_h == 11){
-			printf(": The matrix potentially is ill-conditioned or singular.\n\n");
+			printf("\n!!!The matrix potentially is ill-conditioned or singular!!!\n\n");
+			float* mtxA_check_d = NULL;
+			CHECK(cudaMalloc((void**)&mtxA_check_d, N * N * sizeof(float)));
+			CHECK(cudaMemcpy(mtxA_check_d, mtxA_d, N * N * sizeof(float), cudaMemcpyDeviceToDevice));
+			float conditionNum = computeConditionNumber(mtxA_check_d, N, N);
+			printf("\n\n🔍Condition number = %f🔍\n\n", conditionNum);
+			CHECK(cudaFree(mtxA_check_d));
 		}
 		exit(1);
 	}
@@ -840,7 +847,7 @@ float computeConditionNumber(float* mtxA_d, int numOfRow, int numOfClm)
 
 	float* sngVals_d = extractSngVals(cusolverHandler, numOfRow, numOfClm, numOfRow, mtxA_d);
 	if(debug){
-		printf("\n\nsngVals_d\n\n");
+		printf("\n\nsngular values after SVD decomp\n\n");
 		print_vector(sngVals_d, numOfClm);
 	}
 
