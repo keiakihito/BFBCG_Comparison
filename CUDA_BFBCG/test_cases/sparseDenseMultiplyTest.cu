@@ -41,8 +41,8 @@ int main(int arg, char** argv)
     
     printf("\n\n= = = =sparseDenseMultiplyTest.cu= = = = \n\n");
     
-    // printf("\n\n🔍🔍🔍 Test Case 1 🔍🔍🔍\n\n");
-    // sparseDenseMultiplyTest_Case1();
+    printf("\n\n🔍🔍🔍 Test Case 1 🔍🔍🔍\n\n");
+    sparseDenseMultiplyTest_Case1();
 
     // printf("\n\n🔍🔍🔍 Test Case 2 🔍🔍🔍\n\n");
     // sparseDenseMultiplyTest_Case2();
@@ -66,6 +66,36 @@ int main(int arg, char** argv)
 
 void sparseDenseMultiplyTest_Case1()
 {
+    const int N = 5;
+
+    bool debug = true;
+
+
+
+    //Generate sparse Identity matrix
+    CSRMatrix csrMtx = constructCSRMatrix(N, N, N);
+    createSparseIdentityMtx(csrMtx);
+
+    if(debug){
+        printf("\n\n~~mtxI sparse~~\n\n");
+        print_CSRMtx(csrMtx);
+    }
+
+
+    
+    // //Converst CSR to dense matrix
+    // float* dnsMtx = csrToDense(csrMtx);
+
+    // float *mtxI_d = NULL;
+    // CHECK(cudaMalloc((void**)&mtxI_d, N * N * sizeof(float)));
+    // CHECK(cudaMemcpy(mtxI_d, dnsMtx, N * N * sizeof(float), cudaMemcpyHostToDevice));
+
+    // if(debug){
+    //     printf("\n\n~~mtxI dense~~\n\n");
+    //     print_mtx_row_d(mtxI_d, N, N);
+    // }
+
+    freeCSRMatrix(csrMtx);
 
 } // end of sparseDenseMultiplyTest_Case1
 

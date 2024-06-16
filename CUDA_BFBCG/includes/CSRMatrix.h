@@ -27,6 +27,29 @@ struct CSRMatrix{
     float *vals;
 };
 
+//Constructor
+CSRMatrix constructCSRMatrix(int numOfRow, int numOfClm, int numOfnz)
+{
+    int *row_offsets = (int*)malloc((numOfRow + 1) * sizeof(int));
+    int *col_indices = (int*)malloc(numOfnz * sizeof(int));
+    float *vals = (float*)malloc(numOfnz * sizeof(float));
+
+    CSRMatrix csrMtx;
+    csrMtx.numOfRows = numOfRow;
+    csrMtx.numOfClms = numOfClm;
+    csrMtx.numOfnz = numOfnz;
+    csrMtx.row_offsets = row_offsets;
+    csrMtx.col_indices = col_indices;
+    csrMtx.vals = vals;
+
+    if (! csrMtx.row_offsets || ! csrMtx.col_indices || !csrMtx.vals){
+        fprintf(stderr, "\n\nFalied to allocate memoery for CSR matrix. \n\n");
+        exit(EXIT_FAILURE);
+    }
+
+    return csrMtx;
+}
+
 // Generate a random tridiagonal symmetric matrix
 //It comes from CUDA CG sample code to generate sparse tridiagobal matrix
 void genTridiag(int *I, int *J, float *val, int N, int nz) {
@@ -100,32 +123,6 @@ float* csrToDense(const CSRMatrix &csrMtx)
             dnsMtx[otWkr * csrMtx.numOfClms + csrMtx.col_indices[inWkr]] = csrMtx.vals[inWkr];
         }// end of inner loop
     } // end of outer loop
-
-    return dnsMtx;
-
-    // float *dnsMtx = (float*)calloc(csrMtx.numOfRows * csrMtx.numOfClms, sizeof(float));
-    // if (dnsMtx == NULL) {
-    //     fprintf(stderr, "Failed to allocate memory for dense matrix\n");
-    //     exit(EXIT_FAILURE);
-    // }
-
-    // for (int otWkr = 0; otWkr < csrMtx.numOfRows; ++otWkr) {
-    //     if (csrMtx.row_offsets[otWkr] < 0 || csrMtx.row_offsets[otWkr] >= csrMtx.numOfnz) {
-    //         fprintf(stderr, "Invalid row offset at row %d: %d\n", otWkr, csrMtx.row_offsets[otWkr]);
-    //         exit(EXIT_FAILURE);
-    //     }
-    //     for (int inWkr = csrMtx.row_offsets[otWkr]; inWkr < csrMtx.row_offsets[otWkr + 1]; ++inWkr) {
-    //         if (csrMtx.col_indices[inWkr] < 0 || csrMtx.col_indices[inWkr] >= csrMtx.numOfClms) {
-    //             fprintf(stderr, "Invalid column index at row %d, index %d: %d\n", otWkr, inWkr, csrMtx.col_indices[inWkr]);
-    //             exit(EXIT_FAILURE);
-    //         }
-    //         if (inWkr < 0 || inWkr >= csrMtx.numOfnz) {
-    //             fprintf(stderr, "Invalid inWkr value: %d\n", inWkr);
-    //             exit(EXIT_FAILURE);
-    //         }
-    //         dnsMtx[otWkr * csrMtx.numOfClms + csrMtx.col_indices[inWkr]] = csrMtx.vals[inWkr];
-    //     }
-    // }
 
     return dnsMtx;
 

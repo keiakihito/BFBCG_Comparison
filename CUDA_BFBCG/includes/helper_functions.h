@@ -11,6 +11,8 @@
 
 // helper function CUDA error checking and initialization
 #include "helper_cuda.h"  
+#include "helper_debug.h"
+#include "CSRMatrix.h"  
 
 #define CHECK(call){ \
     const cudaError_t cuda_ret = call; \
@@ -24,10 +26,14 @@
 //function headers
 //Generate random SPD dense matrix
 // N is matrix size
+// SPD <- mtxA * mtxA'
 float* generateSPD_DenseMatrix(int N);
 
 // N is matrix size
 float* generate_TriDiagMatrix(int N);
+
+//Dense Diagonally doinat SPD matrix 
+float* generateWellConditoinedSPDMatrix(int N);
 
 
 void validateSol(const float *mtxA_h, const float* x_h, float* rhs, int N);
@@ -112,6 +118,14 @@ __global__ void normalizeClmVec(float* mtxY_d, int numOfRow, int numOfCol);
 void normalize_Den_Mtx(float* mtxY_d, int numOfRow, int numOfCol);
 
 
+
+
+
+
+
+
+
+
 //Input: float* matrix A, int number of Row, int number Of Column
 //Process: Compute condition number and check whther it is ill-conditioned or not.
 //Output: float condition number
@@ -193,8 +207,8 @@ float* generateSPD_DenseMatrix(int N){
 
 
 // N is matrix size
-float* generate_TriDiagMatrix(int N){
-
+float* generate_TriDiagMatrix(int N)
+{
 	//Allocate memoery in Host
 	float* mtx_h = (float*)calloc(N*N, sizeof(float));
 
@@ -236,9 +250,31 @@ float* generate_TriDiagMatrix(int N){
 } // enf of generate_TriDiagMatrix
 
 
+float* generateWellConditoinedSPDMatrix(int N)
+{
+	float* mtxA_h = (float*)malloc(N * N * sizeof(float));
 
+	srand(time(NULL));
 
-void validateSol(const float *mtxA_h, const float* x_h, float* rhs, int N){
+	//Generate a random matrix
+	for (int otWkr = 0; otWkr < N; otWkr++){
+		for (int inWkr = 0; inWkr <= otWkr; inWkr++){
+			float val = (float)rand() / RAND_MAX;
+			mtxA_h[otWkr * N + inWkr] = val;
+			mtxA_h[inWkr * N + otWkr] = val;
+		} // end of inner loop
+	} // end of outer loop
+
+	//Ensure the matrix is diagonally dominant
+	for (int wkr = 0; wkr < N; wkr++){
+		mtxA_h[wkr * N + wkr] += N;
+	}
+
+	return mtxA_h;
+} // end of generateWellConditoinedSPDMatrix
+
+void validateSol(const float *mtxA_h, const float* x_h, float* rhs, int N)
+{
     float rsum, diff, error = 0.0f;
 
     for (int rw_wkr = 0; rw_wkr < N; rw_wkr++){
@@ -419,7 +455,7 @@ void inverse_Den_Mtx(cusolverDnHandle_t cusolverHandler, float* mtxA_d, float* m
 
 
 //Input: float* identity matrix, int numer of Row, Column
-//Process: Creating identity matrix with number of N
+//Process: Creating dense identity matrix with number of N
 //Output: float* mtxI
 __global__ void identity_matrix(float* mtxI_d, int N)
 {	
@@ -457,6 +493,73 @@ void createIdentityMtx(float* mtxI_d, int N)
     
 	cudaDeviceSynchronize(); // Ensure the kernel execution completes before proceeding
 }
+
+
+
+//Input: int* row_offsets, int* col_indices, float* vals, int N
+//Process: Creating dense identity matrix with number of N
+//Output: int* row_offsets, int* col_indices, float* vals
+__global__ void sparse_identity_matrix(int* row_offsets, int* col_indices, float* vals, int N)
+{
+	int idx = threadIdx.x + blockIdx.x * blockDim.x;
+
+	//Set boundry condition
+	if(idx < N){
+		row_offsets[idx] = idx;
+		col_indices[idx] = idx;
+		vals[idx] = 1.0f;
+	}
+
+	//Endure the last element of wor_offsets is set to N
+	if (idx == N){
+		row_offsets[idx] = N;
+	}
+} // end of spearse_identity_matrix
+
+
+//Input: CSRMatrix csrMtx, int N)
+//Process: Genetate sparse Identity matrix
+//Output: CSRMatrix scrMtx
+void createSparseIdentityMtx(CSRMatrix &csrMtx)
+{
+	int N = csrMtx.numOfRows;
+	int blockSize = 1024;
+	/*
+	For a sparse identity matrix, each row has exactly one non-zero entry, 
+	so it only needs one thread per row. 
+	The correct grid size should be calculated based on the number of rows 
+	instead of the total number of elements (N * N).
+	*/
+	int gridSize = ceil((float)N/ blockSize); // Number of blocks needed
+
+	int* row_offsets_d = NULL;
+	int* col_indices_d = NULL;
+	float* vals_d = NULL;
+
+
+	//Allocate memory for device
+	CHECK(cudaMalloc((void**)&row_offsets_d, (N+1) * sizeof(int)));
+	CHECK(cudaMalloc((void**)&col_indices_d, N * sizeof(int)));
+	CHECK(cudaMalloc((void**)&vals_d, N * sizeof(float)));
+
+	//Launch kernel to generate Identity sparse matrix
+	sparse_identity_matrix<<<gridSize, blockSize>>>(row_offsets_d, col_indices_d, vals_d, N);
+	cudaDeviceSynchronize();
+
+	// Copy the results from the device to the host
+    CHECK(cudaMemcpy(csrMtx.row_offsets, row_offsets_d, (N + 1) * sizeof(int), cudaMemcpyDeviceToHost));
+    CHECK(cudaMemcpy(csrMtx.col_indices, col_indices_d, N * sizeof(int), cudaMemcpyDeviceToHost));
+    CHECK(cudaMemcpy(csrMtx.vals, vals_d, N * sizeof(float), cudaMemcpyDeviceToHost));
+
+	CHECK(cudaFree(row_offsets_d));
+	CHECK(cudaFree(col_indices_d));
+	CHECK(cudaFree(vals_d));
+}
+
+
+
+
+
 
 
 //Sparse matrix multiplicatation
@@ -839,7 +942,7 @@ void normalize_Den_Mtx(float* mtxY_d, int numOfRow, int numOfCol)
 //Output: float condition number
 float computeConditionNumber(float* mtxA_d, int numOfRow, int numOfClm)
 {
-	bool debug = true;
+	bool debug = false;
 
 	//Create handler
     cusolverDnHandle_t cusolverHandler = NULL;
