@@ -27,28 +27,6 @@ struct CSRMatrix{
     float *vals;
 };
 
-//Constructor
-CSRMatrix constructCSRMatrix(int numOfRow, int numOfClm, int numOfnz)
-{
-    int *row_offsets = (int*)malloc((numOfRow + 1) * sizeof(int));
-    int *col_indices = (int*)malloc(numOfnz * sizeof(int));
-    float *vals = (float*)malloc(numOfnz * sizeof(float));
-
-    CSRMatrix csrMtx;
-    csrMtx.numOfRows = numOfRow;
-    csrMtx.numOfClms = numOfClm;
-    csrMtx.numOfnz = numOfnz;
-    csrMtx.row_offsets = row_offsets;
-    csrMtx.col_indices = col_indices;
-    csrMtx.vals = vals;
-
-    if (! csrMtx.row_offsets || ! csrMtx.col_indices || !csrMtx.vals){
-        fprintf(stderr, "\n\nFalied to allocate memoery for CSR matrix. \n\n");
-        exit(EXIT_FAILURE);
-    }
-
-    return csrMtx;
-}
 
 // Generate a random tridiagonal symmetric matrix
 //It comes from CUDA CG sample code to generate sparse tridiagobal matrix
@@ -100,6 +78,41 @@ CSRMatrix generateSparseSPDMatrixCSR(int N) {
     csrMtx.numOfRows = N;
     csrMtx.numOfClms = N;
     csrMtx.numOfnz = nzMax;
+    csrMtx.row_offsets = row_offsets;
+    csrMtx.col_indices = col_indices;
+    csrMtx.vals = vals;
+
+    return csrMtx;
+}
+
+// Generate a sparse SPD matrix in CSR format
+CSRMatrix generateSparseIdentityMatrixCSR(int N) {
+    int *row_offsets = (int*)malloc((N + 1) * sizeof(int));
+    int *col_indices = (int*)malloc(N * sizeof(int));
+    float *vals = (float*)malloc(N * sizeof(float));
+
+    if (!row_offsets || !col_indices || !vals) {
+        fprintf(stderr, "\n\nFailed to allocate memory for CSR matrix. \n\n");
+        exit(EXIT_FAILURE);
+    }
+
+
+    // Fill row_offsets, col_indices, and vals
+    for (int wkr = 0; wkr < N; ++wkr) {
+        row_offsets[wkr] = wkr;
+        col_indices[wkr] = wkr;
+        vals[wkr] = 1.0f;
+    }
+
+    // Last element of row_offsets should be the number of non-zero elements
+    row_offsets[N] = N; 
+
+
+    // Create CSRMatrix object with the result
+    CSRMatrix csrMtx;
+    csrMtx.numOfRows = N;
+    csrMtx.numOfClms = N;
+    csrMtx.numOfnz = N;
     csrMtx.row_offsets = row_offsets;
     csrMtx.col_indices = col_indices;
     csrMtx.vals = vals;

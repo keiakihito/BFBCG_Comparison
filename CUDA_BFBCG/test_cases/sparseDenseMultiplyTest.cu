@@ -66,36 +66,77 @@ int main(int arg, char** argv)
 
 void sparseDenseMultiplyTest_Case1()
 {
+    // Number of matrix A rows and columns
     const int N = 5;
+
+    // Define the dense matrixB column major
+    float dnsMtxB_h[] = {
+        0.1, 0.2, 0.3, 0.4, 0.5,
+        0.6, 0.7, 0.8, 0.9, 1.0,
+        1.1, 1.2, 1.3, 1.4, 1.5
+    };
+
+    int numOfRowsB = 5;
+    int numOfClmsB = 3;
+
+    float* dnsMtxB_d = NULL;
+    float* dnsMtxC_d = NULL;
 
     bool debug = true;
 
 
 
     //Generate sparse Identity matrix
-    CSRMatrix csrMtx = constructCSRMatrix(N, N, N);
-    createSparseIdentityMtx(csrMtx);
+    CSRMatrix csrMtxI_h = generateSparseIdentityMatrixCSR(N);
+
 
     if(debug){
+        
+        //Sparse matrix information to check
         printf("\n\n~~mtxI sparse~~\n\n");
-        print_CSRMtx(csrMtx);
+        print_CSRMtx(csrMtxI_h);
+        
+        //Converst CSR to dense matrix to check
+        float* dnsMtx = csrToDense(csrMtxI_h);
+        float *mtxI_d = NULL;
+        CHECK(cudaMalloc((void**)&mtxI_d, N * N * sizeof(float)));
+        CHECK(cudaMemcpy(mtxI_d, dnsMtx, N * N * sizeof(float), cudaMemcpyHostToDevice));
+        
+        printf("\n\n~~mtxI dense~~\n\n");
+        print_mtx_clm_d(mtxI_d, N, N);
+        
+        CHECK(cudaFree(mtxI_d));
+        free(dnsMtx);
     }
 
 
-    
-    // //Converst CSR to dense matrix
-    // float* dnsMtx = csrToDense(csrMtx);
+    //(1) Allocate memeory 
+    CHECK(cudaMalloc((void**)&dnsMtxB_d, numOfRowsB * numOfClmsB * sizeof(float)));
+    CHECK(cudaMalloc((void**)&dnsMtxC_d, N * numOfClmsB * sizeof(float)));
 
-    // float *mtxI_d = NULL;
-    // CHECK(cudaMalloc((void**)&mtxI_d, N * N * sizeof(float)));
-    // CHECK(cudaMemcpy(mtxI_d, dnsMtx, N * N * sizeof(float), cudaMemcpyHostToDevice));
+    //(2) Copy values from host to device
+    CHECK(cudaMemcpy(dnsMtxB_d, dnsMtxB_h, numOfRowsB * numOfClmsB * sizeof(float), cudaMemcpyHostToDevice));
 
-    // if(debug){
-    //     printf("\n\n~~mtxI dense~~\n\n");
-    //     print_mtx_row_d(mtxI_d, N, N);
-    // }
+    if(debug){
+        //Sparse matrix information to check
+        printf("\n\n~~dense matrix B~~\n\n");
+        print_mtx_clm_d(dnsMtxB_d, numOfRowsB, numOfClmsB);
+    }
 
-    freeCSRMatrix(csrMtx);
+    //Call sparseMultiplySense function
+    multiply_Src_Den_mtx(csrMtxI_h, dnsMtxB_d, numOfClmsB, dnsMtxC_d);
+
+    //Get dense matrix as a result
+    printf("\n\n~~dense matrix C after multiplication~~\n\n");
+    print_mtx_clm_d(dnsMtxC_d, N, numOfClmsB);
+
+
+    //Free memory
+    CHECK(cudaFree(dnsMtxB_d));
+    CHECK(cudaFree(dnsMtxC_d));
+    freeCSRMatrix(csrMtxI_h);
+
+
 
 } // end of sparseDenseMultiplyTest_Case1
 

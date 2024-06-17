@@ -3,6 +3,7 @@
 
 #include <iostream>
 #include <cuda_runtime.h>
+#include <cusparse.h>
 #include <cusolverDn.h>
 #include <cublas_v2.h>
 #include <cstdlib>
@@ -61,6 +62,11 @@ __global__ void identity_matrix(float* mtxI_d, int N);
 //Output: float* mtxI
 void createIdentityMtx(float* mtxI_d, int N);
 
+
+//Input: const CSRMatrix &csrMtx, float *dnsMtxB_d, int numClmB, float * dnxMtxC_d
+//Process: Matrix Multiplication Sparse matrix and Dense matrix
+//Output: dnsMtxC_d, dense matrix C in device
+void multiply_Src_Den_mtx(const CSRMatrix &csrMtx, float *dnsMtxB_d, int numClmsB, float * dnsMtxC_d);
 
 
 
@@ -496,66 +502,6 @@ void createIdentityMtx(float* mtxI_d, int N)
 
 
 
-//Input: int* row_offsets, int* col_indices, float* vals, int N
-//Process: Creating dense identity matrix with number of N
-//Output: int* row_offsets, int* col_indices, float* vals
-__global__ void sparse_identity_matrix(int* row_offsets, int* col_indices, float* vals, int N)
-{
-	int idx = threadIdx.x + blockIdx.x * blockDim.x;
-
-	//Set boundry condition
-	if(idx < N){
-		row_offsets[idx] = idx;
-		col_indices[idx] = idx;
-		vals[idx] = 1.0f;
-	}
-
-	//Endure the last element of wor_offsets is set to N
-	if (idx == N){
-		row_offsets[idx] = N;
-	}
-} // end of spearse_identity_matrix
-
-
-//Input: CSRMatrix csrMtx, int N)
-//Process: Genetate sparse Identity matrix
-//Output: CSRMatrix scrMtx
-void createSparseIdentityMtx(CSRMatrix &csrMtx)
-{
-	int N = csrMtx.numOfRows;
-	int blockSize = 1024;
-	/*
-	For a sparse identity matrix, each row has exactly one non-zero entry, 
-	so it only needs one thread per row. 
-	The correct grid size should be calculated based on the number of rows 
-	instead of the total number of elements (N * N).
-	*/
-	int gridSize = ceil((float)N/ blockSize); // Number of blocks needed
-
-	int* row_offsets_d = NULL;
-	int* col_indices_d = NULL;
-	float* vals_d = NULL;
-
-
-	//Allocate memory for device
-	CHECK(cudaMalloc((void**)&row_offsets_d, (N+1) * sizeof(int)));
-	CHECK(cudaMalloc((void**)&col_indices_d, N * sizeof(int)));
-	CHECK(cudaMalloc((void**)&vals_d, N * sizeof(float)));
-
-	//Launch kernel to generate Identity sparse matrix
-	sparse_identity_matrix<<<gridSize, blockSize>>>(row_offsets_d, col_indices_d, vals_d, N);
-	cudaDeviceSynchronize();
-
-	// Copy the results from the device to the host
-    CHECK(cudaMemcpy(csrMtx.row_offsets, row_offsets_d, (N + 1) * sizeof(int), cudaMemcpyDeviceToHost));
-    CHECK(cudaMemcpy(csrMtx.col_indices, col_indices_d, N * sizeof(int), cudaMemcpyDeviceToHost));
-    CHECK(cudaMemcpy(csrMtx.vals, vals_d, N * sizeof(float), cudaMemcpyDeviceToHost));
-
-	CHECK(cudaFree(row_offsets_d));
-	CHECK(cudaFree(col_indices_d));
-	CHECK(cudaFree(vals_d));
-}
-
 
 
 
@@ -563,6 +509,75 @@ void createSparseIdentityMtx(CSRMatrix &csrMtx)
 
 
 //Sparse matrix multiplicatation
+//Input: const CSRMatrix &csrMtx, float *dnsMtxB_d, int numClmB, float * dnxMtxC_d
+//Process: Matrix Multiplication Sparse matrix and Dense matrix
+//Output: dnsMtxC_d, dense matrix C in device
+void multiply_Src_Den_mtx(const CSRMatrix &csrMtx, float *dnsMtxB_d, int numClmsB, float * dnsMtxC_d)
+{
+	int numRowsA = csrMtx.numOfRows;
+	int numClmsA = csrMtx.numOfClms;
+	int nnz = csrMtx.numOfnz;
+
+	float alpha = 1.0f;
+	float beta = 0.0f;
+
+	bool debug = true;
+
+
+	//(1) Allocate device memoery for CSR matrix
+	int	*row_offsets_d = NULL;
+	int *col_indices_d = NULL;
+	float *vals_d = NULL;
+
+	CHECK(cudaMalloc((void**)&row_offsets_d, (numRowsA + 1) * sizeof(int)));
+	CHECK(cudaMalloc((void**)&col_indices_d, nnz * sizeof(int)));
+	CHECK(cudaMalloc((void**)&vals_d, nnz * sizeof(float)));
+
+	//(2) Copy values from host to device
+	CHECK(cudaMemcpy(row_offsets_d, csrMtx.row_offsets, (numRowsA+1) * sizeof(int), cudaMemcpyHostToDevice));
+	CHECK(cudaMemcpy(col_indices_d, csrMtx.col_indices, nnz * sizeof(int), cudaMemcpyHostToDevice));
+	CHECK(cudaMemcpy(vals_d, csrMtx.vals, nnz * sizeof(float), cudaMemcpyHostToDevice));
+
+	//(3) Crate cuSPARSE handle and descriptors
+	cusparseHandle_t cusparseHandler;
+	cusparseCreate(&cusparseHandler);
+
+	cusparseSpMatDescr_t mtxA;
+	cusparseDnMatDescr_t mtxB, mtxC;
+
+	checkCudaErrors(cusparseCreateCsr(&mtxA, numRowsA, numClmsA, nnz, row_offsets_d, col_indices_d, vals_d, CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I, CUSPARSE_INDEX_BASE_ZERO, CUDA_R_32F));
+	checkCudaErrors(cusparseCreateDnMat(&mtxB, numClmsA, numClmsB, numClmsA, dnsMtxB_d, CUDA_R_32F, CUSPARSE_ORDER_COL));
+	checkCudaErrors(cusparseCreateDnMat(&mtxC, numRowsA, numClmsB, numRowsA, dnsMtxC_d, CUDA_R_32F, CUSPARSE_ORDER_COL));
+
+	//(4) Calculate buffer size of Spase by dense matrix mulply operation
+    size_t bufferSize = 0;
+    void *dBuffer = NULL;
+	checkCudaErrors(cusparseSpMM_bufferSize(cusparseHandler, CUSPARSE_OPERATION_NON_TRANSPOSE, CUSPARSE_OPERATION_NON_TRANSPOSE, &alpha, mtxA, mtxB, &beta, mtxC, CUDA_R_32F, CUSPARSE_SPMM_ALG_DEFAULT, &bufferSize));
+	CHECK(cudaMalloc(&dBuffer, bufferSize));
+
+	//(5)Perform sparse-dense matrix Multiplication
+	checkCudaErrors(cusparseSpMM(cusparseHandler, CUSPARSE_OPERATION_NON_TRANSPOSE, CUSPARSE_OPERATION_NON_TRANSPOSE, &alpha, mtxA, mtxB, &beta, mtxC, CUDA_R_32F, CUSPARSE_SPMM_ALG_DEFAULT, dBuffer));
+
+	if(debug){
+		printf("\n\n~~mtxC after cusparseSpMM~~\n\n");
+		print_mtx_clm_d(dnsMtxC_d, numRowsA, numClmsB);
+	}
+
+	//(6) Free memeory and destroy descriptors
+	checkCudaErrors(cusparseDestroySpMat(mtxA));
+	checkCudaErrors(cusparseDestroyDnMat(mtxB));
+	checkCudaErrors(cusparseDestroyDnMat(mtxC));
+	checkCudaErrors(cusparseDestroy(cusparseHandler));
+
+	CHECK(cudaFree(dBuffer));
+	CHECK(cudaFree(row_offsets_d));
+	CHECK(cudaFree(col_indices_d));
+	CHECK(cudaFree(vals_d));
+
+} // end of multiply_Src_Den_mtx
+
+
+
 
 
 
