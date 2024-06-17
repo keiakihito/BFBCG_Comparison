@@ -39,11 +39,31 @@ float* generateWellConditoinedSPDMatrix(int N);
 
 void validateSol(const float *mtxA_h, const float* x_h, float* rhs, int N);
 
+
+
+//Breakdown Free Block Conjugate Gradient (BFBCG) function
+//Input: float* mtxA_d, float* mtxB_d, float* mtxSolX_d, int numOfA, int numOfColX
+//Process: Solve AX = B where A is sparse matrix, X is solutoinn column vectors and B is given column vectors
+//Output: float* mtxSolX_d
+void bfbcg(float* mtxA_d, float* mtxSolX_d, float* mtxB_d, int numOfA, int numOfColX);
+
+
+
+
+
+//Sub-funcstions for BFBCG implementation
+
 //Input: cublasHandle_t cublasHandler, float* matrix Residual, int number of row, int number of column
 //Process: Extracts the first column vector from the residual matrix,
 // 			Calculate dot product of the first column vector, then compare sqare root of dot product with Threashold
 //Output: boolean
 bool checkStop(cublasHandle_t cublasHandler, float *mtxR_d, int numOfRow, int numOfClm, float const threshold);
+
+//Input: cublasHandle_t cublasHandler, float * mtxR_d, int numOfRow, int numOfClm, float* residual as answer
+//Process: Extrace the first column vector from the Residual mtrix and calculate dot product
+//Output: float& rsdl_h
+void calculateResidual(cublasHandle_t cublasHandler, float * mtxR_d, int numOfRow, int numOfClm, float& rsdl_h);
+
 
 //Inverse funtion with sub functions
 //Input: float* matrix A, float* matrix A inverse, int N, number of Row or Column
@@ -67,6 +87,7 @@ void createIdentityMtx(float* mtxI_d, int N);
 //Process: Matrix Multiplication Sparse matrix and Dense matrix
 //Output: dnsMtxC_d, dense matrix C in device
 void multiply_Sprc_Den_mtx(const CSRMatrix &csrMtx, float *dnsMtxB_d, int numClmsB, float * dnsMtxC_d);
+
 
 
 
@@ -106,6 +127,11 @@ void multiply_Den_ClmM_mtxT_mtx(cublasHandle_t cublasHandler, float* mtxA_d, flo
 //Process: matrix multiplication matrix A' * matrix A
 //Result: matrix C as a result with square matrix
 void multiply_Den_ClmM_mtxT_mtx(cublasHandle_t cublasHandler, float* mtxA_d, float* mtxB_d, float* mtxC_d, int numOfRowA, int numOfClmA, int numOfClmB);
+
+//Input: cublasHandle_t cublasHandler, float* mtxB_d, float* mtxA_d, float* mtxSolX_d, int numOfRowA, int numOfClmB
+//Process: Perform R = 
+//Output: float* mtxB_d as a result with overwritten
+void subtract_multiply_Den_mtx_ngtMtx_Mtx(cublasHandle_t cublasHandler, float* mtxA_d, float* mtxB_d, float* mtxC_d, int numOfRowA, int numOfClmA, int numOfClmB);
 
 
 //Input: cublasHandler_t cublasHandler, float* matrix X, int number of row, int number of column
@@ -244,14 +270,6 @@ float* generate_TriDiagMatrix(int N)
 	mtx_h[(N*(N-1))+ (N-2)] = ((float)rand()/RAND_MAX);
 	mtx_h[(N*(N-1)) + (N-1)] = ((float)rand()/RAND_MAX) + 10.0f;
 	
-	// printf("\nTridiagonal Mtx: \n");
-	// for(int rw_wkr = 0; rw_wkr < N; rw_wkr++){
-	// for(int clm_wkr = 0; clm_wkr < N; clm_wkr++){
-	// 	printf("%f ", mtx_h[rw_wkr*N + clm_wkr]);
-	// }
-	// printf("\n");
-	// }
-	// printf("\n\n");
 
 	//Scale down
 	for (int i = 0; i < N * N; i++) {
@@ -306,6 +324,101 @@ void validateSol(const float *mtxA_h, const float* x_h, float* rhs, int N)
 
 }// end of validateSol
 
+//TO DO
+//Breakdown Free Block Conjugate Gradient (BFBCG) function
+//Input: float* mtxA_d, float* mtxB_d, float* mtxSolX_d, int numOfA, int numOfColX
+//Process: Solve AX = B where A is sparse matrix, X is solutoinn column vectors and B is given column vectors
+//Output: float* mtxSolX_d
+void bfbcg(float* mtxA_d, float* mtxSolX_d, float* mtxB_d, int numOfA, int numOfColX)
+{	
+	int crrntRank = numOfColX;
+	bool debug = true;
+
+	float* mtxR_d = NULL; // Residual
+	CSRMatrix csrMtxM = generateSparseIdentityMatrixCSR(numOfA); // Precondtion
+	float* mtxZ_d = NULL; // Residual * precondition
+	float* mtxP_d = NULL; // Search space
+	float* mtxPQ_d = NULL; // Save it for beta calulatoin
+	float* mtxAlph_d = NULL; // Alpha
+	float* mtxBta_d = NULL; // Beta
+
+	//For calculating relative residual during the iteration
+	float orgRsdl_h = 0.0f; // Initial residual
+	float newRsdl_h = 0.0f; // New residual dring the iteration
+	float rltvRsdl_h = 0.0f; // Relateive resitual
+
+
+	//Crete handler
+	cublasHandle_t cublasHandler = NULL;
+	cusparseHandle_t cusparseHandler = NULL;
+	cusolverDnHandle_t cusolverHandler = NULL;
+    
+	checkCudaErrors(cublasCreate(&cublasHandler));
+	checkCudaErrors(cusparseCreate(&cusparseHandler));
+	checkCudaErrors(cusolverDnCreate(&cusolverHandler));
+
+
+	//(1) Allocate memory
+	CHECK(cudaMalloc((void**)&mtxR_d, numOfA * crrntRank * sizeof(float)));
+	CHECK(cudaMalloc((void**)&mtxZ_d, numOfA * crrntRank * sizeof(float)));
+	// CHECK(cudaMalloc((void**)&orgRsdl_d, sizeof(float)));
+	// CHECK(cudaMalloc((void**)&newRsdl_d, sizeof(float)));
+	// CHECK(cudaMalloc((void**)&rltvRsdl_d, sizeof(float)));
+
+
+	//(2) Copy memory
+	CHECK(cudaMemcpy(mtxR_d, mtxB_d, numOfA * numOfColX * sizeof(float), cudaMemcpyDeviceToDevice));
+	if(debug){
+		printf("\n\n~~mtxR~~\n\n");
+		print_mtx_clm_d(mtxR_d, numOfA, numOfColX);
+	}
+
+
+	//Set up before iterating
+	//R <- B - AX
+	subtract_multiply_Den_mtx_ngtMtx_Mtx(cublasHandler, mtxA_d, mtxSolX_d, mtxR_d, numOfA, numOfA, numOfColX);
+	if(debug){
+		printf("\n\n~~mtxR~~\n\n");
+		print_mtx_clm_d(mtxR_d, numOfA, numOfColX);
+	}
+
+	calculateResidual(cublasHandler, mtxR_d, numOfA, numOfColX, orgRsdl_h);
+	if(debug){
+		printf("\n\n~~original residual: %f~~\n\n", orgRsdl_h);
+	}
+
+	//Z <- MR
+	multiply_Sprc_Den_mtx(csrMtxM, mtxR_d, crrntRank, mtxZ_d);
+	if(debug){
+		printf("\n\n~~mtxZ~~\n\n");
+		print_mtx_clm_d(mtxZ_d, numOfA, crrntRank);
+	}
+
+	//P <- orth(Z), mtxZ will be freed in the function
+	mtxP_d = orth(mtxZ_d, numOfA, crrntRank, crrntRank);
+
+	if(debug){
+		printf("\n\n~~mtxP~~\n\n");
+		print_mtx_clm_d(mtxP_d, numOfA, crrntRank);
+	}
+
+
+
+
+	//()Free memoery
+    checkCudaErrors(cublasDestroy(cublasHandler));
+	checkCudaErrors(cusparseDestroy(cusparseHandler));
+	checkCudaErrors(cusolverDnDestroy(cusolverHandler));
+
+	CHECK(cudaFree(mtxR_d));
+	// CHECK(cudaFree(mtxZ_d));
+	// CHECK(cudaFree(orgRsdl_d));
+	// CHECK(cudaFree(newRsdl_d));
+	// CHECK(cudaFree(rltvRsdl_d));
+
+} // end of bfbcg
+
+
 
 
 
@@ -340,7 +453,41 @@ bool checkStop(cublasHandle_t cublasHandler, float *mtxR_d, int numOfRow, int nu
 		printf("\n\nTHRESHOLD : %f\n", threshold);
 	}
 
+	CHECK(cudaFree(r1_d));
+
 	return (sqrt(dotPrdct)< threshold);
+}
+
+//Input: cublasHandle_t cublasHandler, float * mtxR_d, int numOfRow, int numOfClm, float* residual as answer
+//Process: Extrace the first column vector from the Residual mtrix and calculate dot product
+//Output: float& rsdl_h
+void calculateResidual(cublasHandle_t cublasHandler, float * mtxR_d, int numOfRow, int numOfClm, float& rsdl_h)
+{	
+	float* r1_d = NULL;
+	bool debug =false;
+
+	//Extract first column
+	CHECK(cudaMalloc((void**)&r1_d, numOfRow * sizeof(float)));
+	CHECK(cudaMemcpy(r1_d, mtxR_d, numOfRow * sizeof(float), cudaMemcpyDeviceToDevice));
+
+	if(debug){
+		printf("\n\nvector r_1: \n");
+		print_vector(r1_d, numOfRow);
+	}
+	
+	//Dot product of r_{1}' * r_{1}, cublasSdot
+	checkCudaErrors(cublasSdot(cublasHandler, numOfRow, r1_d, 1, r1_d, 1, &rsdl_h));
+
+	//Square root(dotPrdct)
+	if(debug){
+		printf("\n\ndot product of r_1: %.10f\n", rsdl_h);
+		printf("\n\nsqrt(dot product of r_1): %.10f\n", sqrt(rsdl_h));
+	}
+
+	// Set residual swuare root of dot product
+	rsdl_h = sqrt(rsdl_h);
+
+	CHECK(cudaFree(r1_d));
 }
 
 //Inverse
@@ -626,7 +773,7 @@ float* orth(float* mtxZ_d, int numOfRow, int numOfClm, int &currentRank)
 
 	const float THREASHOLD = 1e-5;
 
-	bool debug = true;
+	bool debug = false;
 
 
 
@@ -885,6 +1032,18 @@ void multiply_Den_ClmM_mtxT_mtx(cublasHandle_t cublasHandler, float* mtxA_d, flo
 	checkCudaErrors(cublasSgemm(cublasHandler, CUBLAS_OP_T, CUBLAS_OP_N, numOfClmA, numOfClmB, numOfRowA, &alpha, mtxA_d, numOfRowA, mtxB_d, numOfRowA, &beta, mtxC_d, numOfClmA));
 
 } // end of multiply_Den_ClmM_mtxT_mtx
+
+
+//Input: cublasHandle_t cublasHandler, float* mtxB_d, float* mtxA_d, float* mtxSolX_d, int numOfRowA, int numOfClmB
+//Process: Perform R = 
+//Output: float* mtxB_d as a result with overwritten
+void subtract_multiply_Den_mtx_ngtMtx_Mtx(cublasHandle_t cublasHandler, float* mtxA_d, float* mtxB_d, float* mtxC_d, int numOfRowA, int numOfClmA, int numOfClmB)
+{
+	const float alpha = -1.0f;
+	const float beta = 1.0f;
+
+	checkCudaErrors(cublasSgemm(cublasHandler, CUBLAS_OP_N, CUBLAS_OP_N, numOfRowA, numOfClmB, numOfClmA, &alpha, mtxA_d, numOfRowA, mtxB_d, numOfClmA, &beta, mtxC_d, numOfRowA));
+}
 
 
 
