@@ -66,7 +66,7 @@ void createIdentityMtx(float* mtxI_d, int N);
 //Input: const CSRMatrix &csrMtx, float *dnsMtxB_d, int numClmB, float * dnxMtxC_d
 //Process: Matrix Multiplication Sparse matrix and Dense matrix
 //Output: dnsMtxC_d, dense matrix C in device
-void multiply_Src_Den_mtx(const CSRMatrix &csrMtx, float *dnsMtxB_d, int numClmsB, float * dnsMtxC_d);
+void multiply_Sprc_Den_mtx(const CSRMatrix &csrMtx, float *dnsMtxB_d, int numClmsB, float * dnsMtxC_d);
 
 
 
@@ -100,6 +100,12 @@ void multiply_Den_ClmM_mtx_mtx(cublasHandle_t cublasHandler, float* mtxA_d, floa
 //Process: matrix multiplication matrix A' * matrix A
 //Result: matrix C as a result with square matrix
 void multiply_Den_ClmM_mtxT_mtx(cublasHandle_t cublasHandler, float* mtxA_d, float* mtxC_d, int numOfRow, int numOfClm);
+
+//Input matrix should be column major, overload function
+//Input: cubasHandle_t cublasHandler, float* matrix A in device, float* matrix B in device , float* result matrix C in device, int number of Row A, int number of column A, int number of cloumn B
+//Process: matrix multiplication matrix A' * matrix A
+//Result: matrix C as a result with square matrix
+void multiply_Den_ClmM_mtxT_mtx(cublasHandle_t cublasHandler, float* mtxA_d, float* mtxB_d, float* mtxC_d, int numOfRowA, int numOfClmA, int numOfClmB);
 
 
 //Input: cublasHandler_t cublasHandler, float* matrix X, int number of row, int number of column
@@ -512,7 +518,7 @@ void createIdentityMtx(float* mtxI_d, int N)
 //Input: const CSRMatrix &csrMtx, float *dnsMtxB_d, int numClmB, float * dnxMtxC_d
 //Process: Matrix Multiplication Sparse matrix and Dense matrix
 //Output: dnsMtxC_d, dense matrix C in device
-void multiply_Src_Den_mtx(const CSRMatrix &csrMtx, float *dnsMtxB_d, int numClmsB, float * dnsMtxC_d)
+void multiply_Sprc_Den_mtx(const CSRMatrix &csrMtx, float *dnsMtxB_d, int numClmsB, float * dnsMtxC_d)
 {
 	int numRowsA = csrMtx.numOfRows;
 	int numClmsA = csrMtx.numOfClms;
@@ -521,7 +527,7 @@ void multiply_Src_Den_mtx(const CSRMatrix &csrMtx, float *dnsMtxB_d, int numClms
 	float alpha = 1.0f;
 	float beta = 0.0f;
 
-	bool debug = true;
+	bool debug = false;
 
 
 	//(1) Allocate device memoery for CSR matrix
@@ -841,17 +847,49 @@ void multiply_Den_ClmM_mtx_mtx(cublasHandle_t cublasHandler, float* mtxA_d, floa
 
 
 //Input matrix should be column major
-//Input: cubasHandle_t cublasHandler, float* matrix A in device, float* matrix B in device , float* result matrix C in device, int number of Row, int number of column
+//Input: cubasHandle_t cublasHandler, float* matrix A in device, float* result matrix C in device, int number of Row, int number of column
 //Process: matrix multiplication matrix A' * matrix A
 //Result: matrix C as a result with square matrix
 void multiply_Den_ClmM_mtxT_mtx(cublasHandle_t cublasHandler, float* mtxA_d, float* mtxC_d, int numOfRow, int numOfClm)
-{
+{	
 	const float alpha = 1.0f;
 	const float beta = 0.0f;
 	checkCudaErrors(cublasSgemm(cublasHandler, CUBLAS_OP_T, CUBLAS_OP_N, numOfClm, numOfClm, numOfRow, &alpha, mtxA_d, numOfRow, mtxA_d, numOfRow, &beta, mtxC_d, numOfClm));
-	CHECK(cudaFree(mtxA_d));
-}
+	
+	// It will be no longer need inside orth(*), and later iteration
+	CHECK(cudaFree(mtxA_d)); 
+} // end of multiply_Den_ClmM_mtxT_mtx
 
+
+
+//Input matrix should be column major, overload function
+//Input: cubasHandle_t cublasHandler, float* matrix A in device, float* matrix B in device , float* result matrix C in device, int number of Row A, int number of column A, int number of cloumn B
+//Process: matrix multiplication matrix A' * matrix A
+//Result: matrix C as a result with square matrix
+void multiply_Den_ClmM_mtxT_mtx(cublasHandle_t cublasHandler, float* mtxA_d, float* mtxB_d, float* mtxC_d, int numOfRowA, int numOfClmA, int numOfClmB)
+{
+	
+	const float alpha = 1.0f;
+	const float beta = 0.0f;
+
+	/*
+	Note
+	3rd parameter, m: Number of rows of C (or AT), which is numOfColA (K).
+	4th parameter, n: Number of columns of C (or B), which is numOfColB (N).
+	5th parameter, k: Number of columns of AT (or rows of B), which is numOfRowA (M).
+	
+	Summary,
+	Thinking about 3rd and 4th parameter as matrix C would be colmnA * columnB because A is transposed.
+	Then, the 5th parameter is inbetween number as rowA or rowB becuase matrix A is transpose
+	*/
+	checkCudaErrors(cublasSgemm(cublasHandler, CUBLAS_OP_T, CUBLAS_OP_N, numOfClmA, numOfClmB, numOfRowA, &alpha, mtxA_d, numOfRowA, mtxB_d, numOfRowA, &beta, mtxC_d, numOfClmA));
+
+} // end of multiply_Den_ClmM_mtxT_mtx
+
+
+
+
+//TO DO check this function is need or not.
 //Input: cublasHandler_t cublasHandler, float* matrix X, int number of row, int number of column
 //Process: the function allocate new memory space and tranpose the mtarix X
 //Output: float* matrix X transpose
