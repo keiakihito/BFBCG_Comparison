@@ -41,14 +41,14 @@ int main(int arg, char** argv)
     
     printf("\n\n= = = =tranposeTest.cu= = = = \n\n");
     
-    printf("\n\n🔍🔍🔍 Test Case 1 🔍🔍🔍\n\n");
-    transposeDenseMultiplyTest_Case1();
+    // printf("\n\n🔍🔍🔍 Test Case 1 🔍🔍🔍\n\n");
+    // transposeDenseMultiplyTest_Case1();
 
     // printf("\n\n🔍🔍🔍 Test Case 2 🔍🔍🔍\n\n");
     // transposeDenseMultiplyTest_Case2();
 
-    // printf("\n\n🔍🔍🔍 Test Case 3 🔍🔍🔍\n\n");
-    // transposeDenseMultiplyTest_Case3();
+    printf("\n\n🔍🔍🔍 Test Case 3 🔍🔍🔍\n\n");
+    transposeDenseMultiplyTest_Case3();
 
     // printf("\n\n🔍🔍🔍 Test Case 4 🔍🔍🔍\n\n");
     // transposeDenseMultiplyTest_Case4();
@@ -69,6 +69,7 @@ void transposeDenseMultiplyTest_Case1()
     const int M = 3;
     const int K = 2;
     const int N = 2;
+
     float mtxA[] = {4.0, 1.0, 1.0, 
                     1.0, 3.0, 1.0};
 
@@ -82,7 +83,78 @@ void transposeDenseMultiplyTest_Case1()
     int numOfRowA = M;
     int numOfColA = K;
     int numOfRowB = M;
-    int numOfColB = K;
+    int numOfColB = N;
+    int numOfRowC = K;
+    int numOfColC = N;
+
+    bool debug = true;
+
+
+    //(1) Allocate device memeory
+    CHECK(cudaMalloc((void**)&mtxA_d, numOfRowA * numOfColA * sizeof(float)));
+    CHECK(cudaMalloc((void**)&mtxB_d, numOfRowB * numOfColB * sizeof(float)));
+    CHECK(cudaMalloc((void**)&mtxC_d, numOfRowC * numOfColC * sizeof(float)));
+
+    //(2) Copy data to device
+    CHECK(cudaMemcpy(mtxA_d, mtxA, numOfRowA * numOfColA * sizeof(float), cudaMemcpyHostToDevice));
+    CHECK(cudaMemcpy(mtxB_d, mtxB, numOfRowB * numOfColB * sizeof(float), cudaMemcpyHostToDevice));
+
+    if(debug){
+        printf("\n\n = = = Before transpose operation = = =\n");
+        printf("\n\n~~mtxA_d~~\n\n");
+        print_mtx_clm_d(mtxA_d, numOfRowA, numOfColA);
+        printf("\n\n~~mtxB_d~~\n\n");
+        print_mtx_clm_d(mtxB_d, numOfRowB, numOfColB);
+    }
+
+
+    //(4) mtxC <- mtxA' * mtxB
+    cublasHandle_t cublasHandler = NULL;
+    checkCudaErrors(cublasCreate(&cublasHandler));
+    
+    multiply_Den_ClmM_mtxT_mtx(cublasHandler, mtxA_d, mtxB_d, mtxC_d, numOfRowA, numOfColA, numOfColB);
+
+    if(debug){
+        printf("\n\n = = = After transpose operation = = =\n");
+        printf("\n\n~~mtxA_d~~\n\n");
+        print_mtx_clm_d(mtxA_d, numOfRowA, numOfColA);
+        printf("\n\n~~mtxB_d~~\n\n");
+        print_mtx_clm_d(mtxB_d, numOfRowB, numOfColB);
+        printf("\n\n~~mtxC_d~~\n\n");
+        print_mtx_clm_d(mtxC_d, numOfRowC, numOfColC);
+    }
+
+    checkCudaErrors(cublasDestroy(cublasHandler));
+    CHECK(cudaFree(mtxA_d));
+    CHECK(cudaFree(mtxB_d));
+    CHECK(cudaFree(mtxC_d));
+} // end of tranposeTest_Case1
+
+
+
+
+void transposeDenseMultiplyTest_Case2()
+{
+    const int M = 5;
+    const int K = 3;
+    const int N = 2;
+    
+    float mtxA[] = {4.0, 1.0, 1.0, 2.0, 3.0, 
+                    1.0, 3.0, 1.0, 5.5, 2.1,
+                    1.1, 1.2, 2.3, 1.4, 1.5};
+
+    float mtxB[] = {1.0, 2.0, 3.0, 2.1, 4.4, 
+                    4.0, 5.0, 6.0, 1.0, 1.2};
+
+    float* mtxA_d = NULL;
+    float* mtxB_d = NULL;
+    float* mtxC_d = NULL;
+
+
+    int numOfRowA = M;
+    int numOfColA = K;
+    int numOfRowB = M;
+    int numOfColB = N;
     int numOfRowC = K;
     int numOfColC = N;
 
@@ -131,13 +203,6 @@ void transposeDenseMultiplyTest_Case1()
     CHECK(cudaFree(mtxA_d));
     CHECK(cudaFree(mtxB_d));
     CHECK(cudaFree(mtxC_d));
-} // end of tranposeTest_Case1
-
-
-
-
-void transposeDenseMultiplyTest_Case2()
-{
 
 } // end of tranposeTest_Case2
 
@@ -146,6 +211,78 @@ void transposeDenseMultiplyTest_Case2()
 
 void transposeDenseMultiplyTest_Case3()
 {
+    const int M = 7;
+    const int K = 5;
+    const int N = 4;
+    
+    float mtxA[] = {4.0, 1.0, 1.0, 2.0, 3.0, -1.1, -1.3, 
+                    1.0, 3.0, 1.0, 5.5, 2.1, -2.1, -2.2,
+                    1.1, 1.2, 2.3, 1.4, 1.5, 3.5, 4.7,
+                    0.9, 0.8, 0.6, 0.8, 0.3, 0.7, 1.1,
+                    0.5, 0.7, 2.1, 1.3, -2.1, 1.5, -1.0,};
+
+    float mtxB[] = {1.0, 2.0, 3.0, 2.1, 4.4, 3.2, 2.1, 
+                    4.0, 5.0, 6.0, 1.0, 1.2, 5.3, 0.7,
+                    3.9, 3.7, 2.4, 2.1, 1.9, 4.8, 1.5,
+                    2.3, -0.9, 1.5, 2.7, -1.9, 2.3, 0.7,};
+
+    float* mtxA_d = NULL;
+    float* mtxB_d = NULL;
+    float* mtxC_d = NULL;
+
+
+    int numOfRowA = M;
+    int numOfColA = K;
+    int numOfRowB = M;
+    int numOfColB = N;
+    int numOfRowC = K;
+    int numOfColC = N;
+
+    bool debug = true;
+
+    //Crete handler
+    cusolverDnHandle_t cusolverHandler;
+    checkCudaErrors(cusolverDnCreate(&cusolverHandler));
+
+
+    //(1) Allocate device memeory
+    CHECK(cudaMalloc((void**)&mtxA_d, numOfRowA * numOfColA * sizeof(float)));
+    CHECK(cudaMalloc((void**)&mtxB_d, numOfRowB * numOfColB * sizeof(float)));
+    CHECK(cudaMalloc((void**)&mtxC_d, numOfRowC * numOfColC * sizeof(float)));
+
+    //(2) Copy data to device
+    CHECK(cudaMemcpy(mtxA_d, mtxA, numOfRowA * numOfColA * sizeof(float), cudaMemcpyHostToDevice));
+    CHECK(cudaMemcpy(mtxB_d, mtxB, numOfRowB * numOfColB * sizeof(float), cudaMemcpyHostToDevice));
+
+    if(debug){
+        printf("\n\n = = = Before transpose operation = = =\n");
+        printf("\n\n~~mtxA_d~~\n\n");
+        print_mtx_clm_d(mtxA_d, numOfRowA, numOfColA);
+        printf("\n\n~~mtxB_d~~\n\n");
+        print_mtx_clm_d(mtxB_d, numOfRowB, numOfColB);
+    }
+
+
+    //(4) mtxC <- mtxA' * mtxB
+    cublasHandle_t cublasHandler = NULL;
+    checkCudaErrors(cublasCreate(&cublasHandler));
+    
+    multiply_Den_ClmM_mtxT_mtx(cublasHandler, mtxA_d, mtxB_d, mtxC_d, numOfRowA, numOfColA, numOfColB);
+
+    if(debug){
+        printf("\n\n = = = After transpose operation = = =\n");
+        printf("\n\n~~mtxA_d~~\n\n");
+        print_mtx_clm_d(mtxA_d, numOfRowA, numOfColA);
+        printf("\n\n~~mtxB_d~~\n\n");
+        print_mtx_clm_d(mtxB_d, numOfRowB, numOfColB);
+        printf("\n\n~~mtxC_d~~\n\n");
+        print_mtx_clm_d(mtxC_d, numOfRowC, numOfColC);
+    }
+
+    checkCudaErrors(cublasDestroy(cublasHandler));
+    CHECK(cudaFree(mtxA_d));
+    CHECK(cudaFree(mtxB_d));
+    CHECK(cudaFree(mtxC_d));
 
 } // end of tranposeTest_Case3
 
