@@ -38,7 +38,64 @@ mtxZ = mtxI * mtxR;
 fprintf("\n\n~~mtxZ~~\n\n");
 disp(mtxZ);
 
+%P <- orth(Z)
 mtxP = orth(mtxZ, threshold);
 fprintf("\n\n~~mtxP~~\n\n");
 disp(mtxP);
+
+for wkr = 1 : 4
+    %Q <- AP
+    mtxQ = mtxA * mtxP;
+    fprintf("\n\n~~mtxQ~~\n\n");
+    disp(mtxQ);
+
+    %Set up (P'Q)^{-1}, (P'R)
+    mtxPTQ_Inv = inv(mtxP' * mtxQ);
+    mtxPTR = mtxP' * mtxR;
+    fprintf("\n\n~~mtxPQ_Inv~~\n\n");
+    disp(mtxPTQ_Inv);
+    fprintf("\n\n~~mtxP'R~~\n\n");
+    disp(mtxPTR);
+
+    %Aplha <- (P'Q)^{-1} * (P'R)
+    mtxAlph = mtxPTQ_Inv * mtxPTR;
+    fprintf("\n\n~~mtxAlph~~\n\n");
+    disp(mtxAlph);
+
+    %X_{i+1} <- x_{i} + P * alpha
+    mtxSolX = mtxSolX + (mtxP * mtxAlph);
+    fprintf("\n\n~~mtxSolX~~\n\n");
+    disp(mtxSolX);
+
+    %R_{i+1} <- R_{i} - Q * alpha
+    mtxR = mtxR - (mtxQ * mtxAlph);
+    fprintf("\n\n~~mtxR~~\n\n");
+    disp(mtxR);
+
+    % Calculate relative residue
+    crrntRsdl = calculateResidual(mtxR);
+    rltvRsdl = crrntRsdl / orgRsdl;
+    fprintf("\n\n~~relative residue: %f~~~ \n\n", rltvRsdl);
+
+    %If converged within tol, then stop
+
+    %Z <- MR
+    mtxZ = mtxI * mtxR;
+    fprintf("\n\n~~mtxZ~~\n\n");
+    disp(mtxZ);
+
+    %beta <- -(P'Q)^{-1} * (Q'Z)
+    mtxBta = -(mtxPTQ_Inv) * (mtxQ' * mtxZ);
+    fprintf("\n\n~~mtxBta~~\n\n");
+    disp(mtxBta);
+
+    %P_{i+1} <- orth(Z + P*beta)
+    mtxP = orth((mtxZ + mtxP * mtxBta), threshold);
+    fprintf("\n\n~~mtxP~~\n\n");
+    disp(mtxP);
+end
+
+fprintf("\n\n~~After iteration~~\n");
+fprintf("\n~~mtxX_Sol~~\n\n");
+disp(mtxSolX);
 
