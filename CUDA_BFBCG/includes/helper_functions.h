@@ -324,7 +324,7 @@ void validateSol(const float *mtxA_h, const float* x_h, float* rhs, int N)
 
 }// end of validateSol
 
-//TO DO
+//TODO
 //Breakdown Free Block Conjugate Gradient (BFBCG) function
 //Input: float* mtxA_d, float* mtxB_d, float* mtxSolX_d, int numOfA, int numOfColX
 //Process: Solve AX = B where A is sparse matrix, X is solutoinn column vectors and B is given column vectors
@@ -338,7 +338,10 @@ void bfbcg(float* mtxA_d, float* mtxSolX_d, float* mtxB_d, int numOfA, int numOf
 	CSRMatrix csrMtxM = generateSparseIdentityMatrixCSR(numOfA); // Precondtion
 	float* mtxZ_d = NULL; // Residual * precondition
 	float* mtxP_d = NULL; // Search space
-	float* mtxPQ_d = NULL; // Save it for beta calulatoin
+	float* mtxQ_d = NULL; // Q <- A * P
+	float* mtxPTQ_d = NULL; // To calculate mtxPTQ_inv_d
+	float* mtxPTQ_inv_d = NULL; // Save it for beta calulatoin
+	float* mtxPTR_d = NULL; 
 	float* mtxAlph_d = NULL; // Alpha
 	float* mtxBta_d = NULL; // Beta
 
@@ -361,6 +364,10 @@ void bfbcg(float* mtxA_d, float* mtxSolX_d, float* mtxB_d, int numOfA, int numOf
 	//(1) Allocate memory
 	CHECK(cudaMalloc((void**)&mtxR_d, numOfA * crrntRank * sizeof(float)));
 	CHECK(cudaMalloc((void**)&mtxZ_d, numOfA * crrntRank * sizeof(float)));
+	CHECK(cudaMalloc((void**)&mtxQ_d, numOfA * crrntRank * sizeof(float)));
+	CHECK(cudaMalloc((void**)&mtxPTQ_d, sizeof(float)));
+	CHECK(cudaMalloc((void**)&mtxPTQ_inv_d, sizeof(float)));
+	CHECK(cudaMalloc((void**)&mtxPTR_d, crrntRank * sizeof(float)));
 	// CHECK(cudaMalloc((void**)&orgRsdl_d, sizeof(float)));
 	// CHECK(cudaMalloc((void**)&newRsdl_d, sizeof(float)));
 	// CHECK(cudaMalloc((void**)&rltvRsdl_d, sizeof(float)));
@@ -392,15 +399,90 @@ void bfbcg(float* mtxA_d, float* mtxSolX_d, float* mtxB_d, int numOfA, int numOf
 	if(debug){
 		printf("\n\n~~mtxZ~~\n\n");
 		print_mtx_clm_d(mtxZ_d, numOfA, crrntRank);
+		printf("\n\n~~mtxR~~\n\n");
+		print_mtx_clm_d(mtxR_d, numOfA, numOfColX);
 	}
 
 	//P <- orth(Z), mtxZ will be freed in the function
 	mtxP_d = orth(mtxZ_d, numOfA, crrntRank, crrntRank);
 
 	if(debug){
+		printf("\n\n = =  Current Rank: %d = = \n\n", crrntRank);
 		printf("\n\n~~mtxP~~\n\n");
 		print_mtx_clm_d(mtxP_d, numOfA, crrntRank);
 	}
+
+	//Start iteration
+	int counter = 1;
+	const int MAX_COUNT = 2;
+	while(counter < MAX_COUNT){
+		
+		//Q <- AP
+		multiply_Den_ClmM_mtx_mtx(cublasHandler, mtxA_d, mtxP_d, mtxQ_d, numOfA, crrntRank, numOfA);
+		if(debug){
+			printf("\n\n~~mtxA~~\n\n");
+			print_mtx_clm_d(mtxA_d, numOfA, numOfA);
+			printf("\n\n~~mtxQ~~\n\n");
+			print_mtx_clm_d(mtxQ_d, numOfA, crrntRank);
+		}
+
+		//(P'Q)^{-1}, save for the beta calculation
+		multiply_Den_ClmM_mtxT_mtx(cublasHandler, mtxP_d, mtxQ_d, mtxPTQ_d, numOfA, numOfA, crrntRank);
+		inverse_Den_Mtx(cusolverHandler, mtxPTQ_d, mtxPTQ_inv_d, crrntRank);
+		if(debug){
+			printf("\n\n~~mtxPTQ~~\n\n");
+			print_mtx_clm_d(mtxPTQ_d, crrntRank, crrntRank);
+			printf("\n\n~~mtxPTQ_inv~~\n\n");
+			print_mtx_clm_d(mtxPTQ_inv_d, crrntRank, crrntRank);
+		}
+
+		//(P'R)
+		multiply_Den_ClmM_mtxT_mtx(cublasHandler, mtxP_d, mtxR_d, mtxPTR_d, numOfA, crrntRank, numOfColX);
+		if(debug){
+			printf("\n\n~~mtxPTR~~\n\n");
+			print_mtx_clm_d(mtxPTR_d, crrntRank, numOfColX);
+		}
+
+
+		//Alpha <- (P'Q)^{-1} * (P'R)
+		if(crrntRank == 1){
+			// Copy data to mtxAlpha to overwrite as an answer
+    		CHECK(cudaMalloc((void**)&mtxAlph_d, numOfColX * sizeof(float)));
+			CHECK(cudaMemcpy(mtxAlph_d, mtxPTR_d, numOfColX * sizeof(float), cudaMemcpyDeviceToDevice));
+			float* alpha_h = NULL; // TODO assign out of scope
+			alpha_h = (float*)malloc (crrntRank * sizeof(float));
+			CHECK(cudaMemcpy(alpha_h, mtxPTQ_inv_d, crrntRank * sizeof(float), cudaMemcpyDeviceToHost));
+			printf("\n\n = = alpha: %f = = \n", *alpha_h);
+
+			//TODO Implement 
+			// checkCudaErrors(cublasSscal(handle, 3, &alpha, d_B, 1));
+
+		}else{
+			multiply_Den_ClmM_mtx_mtx(cublasHandler, mtxPTQ_inv_d, mtxPTR_d, mtxAlph_d, crrntRank, numOfColX, crrntRank);
+			if(debug){
+				printf("\n\n~~mtxAlpha~~\n\n");
+				print_mtx_clm_d(mtxAlph_d, crrntRank, numOfColX);
+			}
+		}
+
+
+		//X_{i+1} <- x_{i} + P * alpha
+
+
+		//R_{i+1} <- R_{i} - Q * alpha
+
+		//If it is converged, then stopped.
+
+		//Z_{i+1} <- MR_{i+1}
+
+		//(Q'Z_{i+1})
+		//beta <- -(P'Q)^{-1} * (Q'Z_{i+1})
+
+
+		//P_{i+1} = orth(Z_{i+1} + p * beta)
+
+		counter++;
+	} // end of while
 
 
 
@@ -514,7 +596,7 @@ void inverse_Den_Mtx(cusolverDnHandle_t cusolverHandler, float* mtxA_d, float* m
 
     // Size of the workng space
     int lwork = 0;
-	bool debug = true;
+	bool debug = false;
 
 
     if(debug){
@@ -1011,7 +1093,7 @@ void multiply_Den_ClmM_mtxT_mtx(cublasHandle_t cublasHandler, float* mtxA_d, flo
 
 //Input matrix should be column major, overload function
 //Input: cubasHandle_t cublasHandler, float* matrix A in device, float* matrix B in device , float* result matrix C in device, int number of Row A, int number of column A, int number of cloumn B
-//Process: matrix multiplication matrix A' * matrix A
+//Process: matrix multiplication matrix A' * matrix B
 //Result: matrix C as a result with square matrix
 void multiply_Den_ClmM_mtxT_mtx(cublasHandle_t cublasHandler, float* mtxA_d, float* mtxB_d, float* mtxC_d, int numOfRowA, int numOfClmA, int numOfClmB)
 {
@@ -1048,7 +1130,7 @@ void subtract_multiply_Den_mtx_ngtMtx_Mtx(cublasHandle_t cublasHandler, float* m
 
 
 
-//TO DO check this function is need or not.
+//TODO check this function is need or not.
 //Input: cublasHandler_t cublasHandler, float* matrix X, int number of row, int number of column
 //Process: the function allocate new memory space and tranpose the mtarix X
 //Output: float* matrix X transpose
