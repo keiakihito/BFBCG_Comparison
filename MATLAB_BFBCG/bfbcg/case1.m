@@ -43,7 +43,7 @@ mtxP = orth(mtxZ, threshold);
 fprintf("\n\n~~mtxP~~\n\n");
 disp(mtxP);
 
-for wkr = 1 : 4
+for wkr = 1 : 2
     %Q <- AP
     mtxQ = mtxA * mtxP;
     fprintf("\n\n~~mtxQ~~\n\n");
@@ -84,10 +84,20 @@ for wkr = 1 : 4
     fprintf("\n\n~~mtxZ~~\n\n");
     disp(mtxZ);
 
+    %(Q'Z)
+    mtxQTZ = (mtxQ' * mtxZ);
+    fprintf("\n\n~~mtxQTZ~~\n\n");
+    disp(mtxQTZ);
+
     %beta <- -(P'Q)^{-1} * (Q'Z)
-    mtxBta = -(mtxPTQ_Inv) * (mtxQ' * mtxZ);
+    mtxBta = -(mtxPTQ_Inv) * mtxQTZ;
     fprintf("\n\n~~mtxBta~~\n\n");
     disp(mtxBta);
+
+    %mtxZ + P * beta
+    mtxZ_pls_PBta = mtxZ + mtxP * mtxBta;
+    fprintf("\n\n~~mtxZ + p * beta~~\n\n");
+    disp(mtxZ_pls_PBta);
 
     %P_{i+1} <- orth(Z + P*beta)
     mtxP = orth((mtxZ + mtxP * mtxBta), threshold);
