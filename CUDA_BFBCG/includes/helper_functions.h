@@ -324,7 +324,7 @@ void validateSol(const float *mtxA_h, const float* x_h, float* rhs, int N)
 
 }// end of validateSol
 
-//TODO
+//TODO change mtxA_d to crsMtxA_h later for sparse multiplication.
 //Breakdown Free Block Conjugate Gradient (BFBCG) function
 //Input: float* mtxA_d, float* mtxB_d, float* mtxSolX_d, int numOfA, int numOfColX
 //Process: Solve AX = B where A is sparse matrix, X is solutoinn column vectors and B is given column vectors
@@ -343,7 +343,14 @@ void bfbcg(float* mtxA_d, float* mtxSolX_d, float* mtxB_d, int numOfA, int numOf
 	float* mtxPTQ_inv_d = NULL; // Save it for beta calulatoin
 	float* mtxPTR_d = NULL; 
 	float* mtxAlph_d = NULL; // Alpha
+	// float* sclAlph_d = NULL; // Alpha for scaler
+	float* alpha_h = NULL; // sclaler for alpha in case alpha is 1 by 1
 	float* mtxBta_d = NULL; // Beta
+	float* beta_h = NULL; // sclaler for alpha in case alpha is 1 by 1
+	float* mtxQTZ_d = NULL; // For calculating mtxBta
+
+	
+			
 
 	//For calculating relative residual during the iteration
 	float orgRsdl_h = 0.0f; // Initial residual
@@ -368,6 +375,14 @@ void bfbcg(float* mtxA_d, float* mtxSolX_d, float* mtxB_d, int numOfA, int numOf
 	CHECK(cudaMalloc((void**)&mtxPTQ_d, sizeof(float)));
 	CHECK(cudaMalloc((void**)&mtxPTQ_inv_d, sizeof(float)));
 	CHECK(cudaMalloc((void**)&mtxPTR_d, crrntRank * sizeof(float)));
+	CHECK(cudaMalloc((void**)&mtxAlph_d, crrntRank * numOfColX * sizeof(float)));
+	// CHECK(cudaMalloc((void**)&sclAlph_d, sizeof(float)));
+	CHECK(cudaMalloc((void**)&mtxBta_d, crrntRank * numOfColX * sizeof(float)));
+	CHECK(cudaMalloc((void**)&mtxQTZ_d, crrntRank * sizeof(float)));
+
+
+	alpha_h = (float*)malloc(sizeof(float));
+	beta_h = (float*)malloc(sizeof(float));
 	// CHECK(cudaMalloc((void**)&orgRsdl_d, sizeof(float)));
 	// CHECK(cudaMalloc((void**)&newRsdl_d, sizeof(float)));
 	// CHECK(cudaMalloc((void**)&rltvRsdl_d, sizeof(float)));
@@ -381,7 +396,7 @@ void bfbcg(float* mtxA_d, float* mtxSolX_d, float* mtxB_d, int numOfA, int numOf
 	}
 
 
-	//Set up before iterating
+	//(3.1)Set up before iterating
 	//R <- B - AX
 	subtract_multiply_Den_mtx_ngtMtx_Mtx(cublasHandler, mtxA_d, mtxSolX_d, mtxR_d, numOfA, numOfA, numOfColX);
 	if(debug){
@@ -412,7 +427,7 @@ void bfbcg(float* mtxA_d, float* mtxSolX_d, float* mtxB_d, int numOfA, int numOf
 		print_mtx_clm_d(mtxP_d, numOfA, crrntRank);
 	}
 
-	//Start iteration
+	//(3.2)Start iteration
 	int counter = 1;
 	const int MAX_COUNT = 2;
 	while(counter < MAX_COUNT){
@@ -447,53 +462,120 @@ void bfbcg(float* mtxA_d, float* mtxSolX_d, float* mtxB_d, int numOfA, int numOf
 		//Alpha <- (P'Q)^{-1} * (P'R)
 		if(crrntRank == 1){
 			// Copy data to mtxAlpha to overwrite as an answer
-    		CHECK(cudaMalloc((void**)&mtxAlph_d, numOfColX * sizeof(float)));
+    		// CHECK(cudaMalloc((void**)&mtxAlph_d, numOfColX * sizeof(float)));
 			CHECK(cudaMemcpy(mtxAlph_d, mtxPTR_d, numOfColX * sizeof(float), cudaMemcpyDeviceToDevice));
-			float* alpha_h = NULL; // TODO assign out of scope
-			alpha_h = (float*)malloc (crrntRank * sizeof(float));
-			CHECK(cudaMemcpy(alpha_h, mtxPTQ_inv_d, crrntRank * sizeof(float), cudaMemcpyDeviceToHost));
-			printf("\n\n = = alpha: %f = = \n", *alpha_h);
+			CHECK(cudaMemcpy(alpha_h, mtxPTQ_inv_d, sizeof(float), cudaMemcpyDeviceToHost));
+			printf("\n\n = = mtxPTQ_inv_d: %f = = \n", *alpha_h);
 
-			//TODO Implement 
+			//TODO check
 			// checkCudaErrors(cublasSscal(handle, 3, &alpha, d_B, 1));
+			checkCudaErrors(cublasSscal(cublasHandler, numOfColX, &alpha_h, sclAlph_d, crrntRank));
+			if(debug){
+				printf("\n\n~~mtxAlph_d~~\n\n");
+				print_mtx_clm_d(mtxAlph_d, crrntRank, numOfColX);
+			}
 
 		}else{
+			// CHECK(cudaMalloc((void**)&mtxAlph_d , crrntRank * numOfColX * sizeof(float)));
+			// CHECK(cudaMemcpy(mtxAlph_d, mtxPTR_d, crrntRank * numOfColX * sizeof(float), cudaMemcpyDeviceToDevice));
 			multiply_Den_ClmM_mtx_mtx(cublasHandler, mtxPTQ_inv_d, mtxPTR_d, mtxAlph_d, crrntRank, numOfColX, crrntRank);
 			if(debug){
 				printf("\n\n~~mtxAlpha~~\n\n");
 				print_mtx_clm_d(mtxAlph_d, crrntRank, numOfColX);
 			}
-		}
+		} // end of if
 
 
 		//X_{i+1} <- x_{i} + P * alpha
-
+		// multiply_sum_Den_ClmM_mtx_mtx(cublasHandler, mtxP_d, mtxAlph_d, mtxSolX_d, numOfA, numOfColX, crrntRank);
+		// if(debug){
+		// 		printf("\n\n~~mtxSolX_d~~\n\n");
+		// 		print_mtx_clm_d(mtxSolX_d, numOfA, numOfColX);
+		// }
 
 		//R_{i+1} <- R_{i} - Q * alpha
+		// subtract_multiply_Den_mtx_ngtMtx_Mtx(cublasHandler, mtxQ_d, mtxAlph_d, mtxR_d, numOfA, crrntRank, numOfColX);
+		// if(debug){
+		// 		printf("\n\n~~mtxR_d~~\n\n");
+		// 		print_mtx_clm_d(mtxR_d, numOfA, numOfColX);
+		// }
 
 		//If it is converged, then stopped.
 
 		//Z_{i+1} <- MR_{i+1}
+		// multiply_Sprc_Den_mtx(csrMtxM, mtxR_d, numOfColX, mtxZ_d);
+		// if(debug){
+		// 	printf("\n\n~~mtxZ~~\n\n");
+		// 	print_mtx_clm_d(mtxZ_d, numOfA, numOfColX);
+		// 	printf("\n\n~~mtxR~~\n\n");
+		// 	print_mtx_clm_d(mtxR_d, numOfA, numOfColX);
+		// }
+
 
 		//(Q'Z_{i+1})
+		// multiply_Den_ClmM_mtxT_mtx(cublasHandler, mtxQ_d, mtxZ_d, mtxQTZ_d, numOfA, crrntRank, numOfColX);
+		
 		//beta <- -(P'Q)^{-1} * (Q'Z_{i+1})
+		if(crrntRank == 1){
+			
+			// // Copy data to mtxBta to overwrite as an answer
+			// CHECK(cudaMemcpy(mtxBta_d, mtxQTZ_d, numOfColX * sizeof(float), cudaMemcpyDeviceToDevice));
+			// CHECK(cudaMemcpy(beta_h, mtxPTQ_inv_d, crrntRank * sizeof(float), cudaMemcpyDeviceToHost));
+			// printf("\n\n = =  mtxPTQ_inv_d: %f = = \n", *beta_h);
+			// *beta_h *= -1.0f;
+			// printf("\n\n = =  - mtxPTQ_inv_d: %f = = \n", *beta_h);
 
+			// //TODO check
+			// checkCudaErrors(cublasSscal(cublasHandler, numOfColX, &beta_h, mtxBta_d, crrntRank));
+			// if(debug){
+			// 	printf("\n\n~~mtxBta_d~~\n\n");
+			// 	print_mtx_clm_d(mtxBta_d, crrntRank, numOfColX);
+			// }
+
+		}else{
+
+			// multiply_ngt_Den_ClmM_mtx_mtx(cublasHandler, mtxPTQ_inv_d, mtxQTZ_d, mtxBta_d, crrntRank, numOfColX, crrntRank);
+		}
+		
 
 		//P_{i+1} = orth(Z_{i+1} + p * beta)
+		//Z_{i+1} <- Z_{i+1} + p * beta overwrite with Sgemm function
+		//Then P_{i+1} <- orth(Z_{ i+1})
+		// multiply_sum_Den_ClmM_mtx_mtx(cublasHandler, mtxP_d, mtxBta_d, mtxZ_d, numOfA, numOfColX, crrntRank);
+		// if(debug){
+		// 	printf("\n\n~~mtxZ_{i+1}_d~~\n\n");
+		// 	print_mtx_clm_d(mtxZ_d, numOfA, numOfColX);
+		// }
+
+		//To update matrix P
+		//free(mtxP_d);
+		//mtxP_d = NULL;
+		//mtxP_d = orth(mtxZ_d, numOfA, numOfColX, crrntRank);
+
 
 		counter++;
 	} // end of while
 
 
+	//(4)After the loop, mtxSolX_d holds an approximate solution with BFBCG.
+	
 
 
-	//()Free memoery
+	//(5)Free memoery
     checkCudaErrors(cublasDestroy(cublasHandler));
 	checkCudaErrors(cusparseDestroy(cusparseHandler));
 	checkCudaErrors(cusolverDnDestroy(cusolverHandler));
 
 	CHECK(cudaFree(mtxR_d));
-	// CHECK(cudaFree(mtxZ_d));
+	CHECK(cudaFree(mtxZ_d));
+	CHECK(cudaFree(mtxQ_d));
+	CHECK(cudaFree(mtxPTQ_d));
+	CHECK(cudaFree(mtxPTQ_inv_d));
+	CHECK(cudaFree(mtxPTR_d));
+	CHECK(cudaFree(mtxQTZ_d));
+	free(alpha_h);
+	free(beta_h);
+
 	// CHECK(cudaFree(orgRsdl_d));
 	// CHECK(cudaFree(newRsdl_d));
 	// CHECK(cudaFree(rltvRsdl_d));
@@ -506,10 +588,9 @@ void bfbcg(float* mtxA_d, float* mtxSolX_d, float* mtxB_d, int numOfA, int numOf
 
 
 //Stop condition
-//TO DO implement and test isStop, inverse, and sparseMul
 //Input: cublasHandle_t cublasHandler, float* matrix Residual, int number of row, int number of column
 //Process: Extracts the first column vector from the residual matrix,
-// 			Calculate dot product of the first column vector, then compare sqare root of dot product with Threashold
+//Calculate dot product of the first column vector, then compare sqare root of dot product with Threashold
 bool checkStop(cublasHandle_t cublasHandler, float *mtxR_d, int numOfRow, int numOfClm, float const threshold)
 {
 	float* r1_d = NULL;
@@ -808,7 +889,7 @@ void multiply_Sprc_Den_mtx(const CSRMatrix &csrMtx, float *dnsMtxB_d, int numClm
 	CHECK(cudaFree(row_offsets_d));
 	CHECK(cudaFree(col_indices_d));
 	CHECK(cudaFree(vals_d));
-
+　
 } // end of multiply_Src_Den_mtx
 
 
@@ -1072,6 +1153,31 @@ void multiply_Den_ClmM_mtx_mtx(cublasHandle_t cublasHandler, float* mtxA_d, floa
 
 	checkCudaErrors(cublasSgemm(cublasHandler, CUBLAS_OP_N, CUBLAS_OP_N, numOfRowA, numOfColB, numOfColA, &alpha, mtxA_d, numOfRowA, mtxB_d, numOfColA, &beta, mtxC_d, numOfRowA));
 
+}
+
+//Input matrix should be column major
+//Input: cubasHandle_t cublasHandler, float* matrix A in device, float* matrix B in device , float* result matrix C in device, int leading dimension A, in leading dimension B
+//Process: matrix multiplication matrix -A and matrix B
+//Result: matrix C as a result
+void multiply_ngt_Den_ClmM_mtx_mtx(cublasHandle_t cublasHandler, float* mtxA_d, float* mtxB_d, float* mtxC_d, int numOfRowA, int numOfColB, int numOfColA)
+{	
+	const float alpha = -1.0f;
+	const float beta = 0.0f;
+
+	checkCudaErrors(cublasSgemm(cublasHandler, CUBLAS_OP_N, CUBLAS_OP_N, numOfRowA, numOfColB, numOfColA, &alpha, mtxA_d, numOfRowA, mtxB_d, numOfColA, &beta, mtxC_d, numOfRowA));
+
+}
+
+//Input matrix should be column major
+//Input: cubasHandle_t cublasHandler, float* matrix A in device, float* matrix B in device , float* result matrix C in device, int leading dimension A, in leading dimension B
+//Process: matrix C <-  matrix A * matrix B + matrixC with overwrite
+//Result: matrix C as a result
+void multiply_sum_Den_ClmM_mtx_mtx(cublasHandle_t cublasHandler, float* mtxA_d, float* mtxB_d, float* mtxC_d, int numOfRowA, int numOfColB, int numOfColA)
+{	
+	const float alpha = 1.0f;
+	const float beta = 1.0f;
+
+	checkCudaErrors(cublasSgemm(cublasHandler, CUBLAS_OP_N, CUBLAS_OP_N, numOfRowA, numOfColB, numOfColA, &alpha, mtxA_d, numOfRowA, mtxB_d, numOfColA, &beta, mtxC_d, numOfRowA));
 }
 
 
