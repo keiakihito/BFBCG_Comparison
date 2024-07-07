@@ -8,7 +8,7 @@
 #include <cublas_v2.h>
 #include <cstdlib>
 #include <cmath>
-#include<sys/time.h>
+#include <sys/time.h>
 
 // helper function CUDA error checking and initialization
 #include "helper_cuda.h"  
@@ -94,10 +94,10 @@ void multiply_Sprc_Den_mtx(const CSRMatrix &csrMtx, float *dnsMtxB_d, int numClm
 
 
 
-//Input: float* mtxZ, int number of Row, int number Of column, int & currentRank
+//Input: float* mtxY_hat_d, float* mtxZ, int number of Row, int number Of column, int & currentRank
 //Process: the function extracts orthonormal set from the matrix Z
 //Output: float* mtxY_hat, the orthonormal set of matrix Z.
-float* orth(float* mtxZ_d, int numOfRow, int numOfClm, int &currentRank);
+void orth(float** mtxY_hat_d, float* mtxZ_d, int numOfRow, int numOfClm, int &currentRank);
 
 //Input: cusolverDnHandler, int number of row, int number of column, int leading dimensino, 
 //		 float* matrix A, float* matrix U, float* vector singlluar values, float* matrix V tranpose
@@ -431,8 +431,9 @@ void bfbcg(float* mtxA_d, float* mtxSolX_d, float* mtxB_d, int numOfA, int numOf
 	}
 
 	//P <- orth(Z), mtxZ will be freed in the function
-	mtxP_d = orth(mtxZ_d, numOfA, crrntRank, crrntRank);
-
+	orth(&mtxP_d, mtxZ_d, numOfA, crrntRank, crrntRank);
+	printf("\n\n~~mtxP~~\n\n");
+	print_mtx_clm_d(mtxP_d, numOfA, crrntRank);
 
 	if(debug){
 		printf("\n\n = =  Current Rank: %d = = \n\n", crrntRank);
@@ -565,12 +566,12 @@ void bfbcg(float* mtxA_d, float* mtxSolX_d, float* mtxB_d, int numOfA, int numOf
 
 		//To update matrix P
 		//TODO update orth return value as void
-		// free(mtxP_d);
-		// mtxP_d = NULL;
-		float* mtxP2_d = orth(mtxZ_d, numOfA, numOfColX, crrntRank);
+		CHECK(cudaFree(mtxP_d));
+		mtxP_d = NULL;
+		orth(&mtxP_d, mtxZ_d, numOfA, numOfColX, crrntRank);
 		if(debug){
-			printf("\n\n~~ mtxP2_d ~~\n\n");
-			print_mtx_clm_d(mtxP2_d, numOfA, crrntRank);
+			printf("\n\n~~ mtxP_d ~~\n\n");
+			print_mtx_clm_d(mtxP_d, numOfA, crrntRank);
 		}
 
 		counter++;
@@ -921,7 +922,7 @@ void multiply_Sprc_Den_mtx(const CSRMatrix &csrMtx, float *dnsMtxB_d, int numClm
 //Input: float* mtxZ, int number of Row, int number Of column, int & currentRank
 //Process: the function extracts orthonormal set from the matrix Z
 //Output: float* mtxY_hat, the orthonormal set of matrix Z.
-float* orth(float* mtxZ_d, int numOfRow, int numOfClm, int &currentRank)
+void orth(float** mtxY_hat_d, float* mtxZ_d, int numOfRow, int numOfClm, int &currentRank)
 {	
 	/*
 	Pseudocode
@@ -1036,6 +1037,7 @@ float* orth(float* mtxZ_d, int numOfRow, int numOfClm, int &currentRank)
 	}	
 
 	//(4.6) Multiply matrix Y <- matrix Z * matrix V Truncated
+	if(!mtxY_d){cudaFree(mtxY_d);}
 	CHECK(cudaMalloc((void**)&mtxY_d, numOfRow * currentRank * sizeof(float)));
 	multiply_Den_ClmM_mtx_mtx(cublasHandler, mtxZ_d, mtxV_trnc_d, mtxY_d, numOfRow, currentRank, numOfClm);
 	
@@ -1055,24 +1057,36 @@ float* orth(float* mtxZ_d, int numOfRow, int numOfClm, int &currentRank)
 	if(debug){
 		//Check the matrix Y hat column vectors are orthogonal eachother
 		float* mtxI_d = NULL;
+		float* mtxY_cpy_d = NULL;
 		CHECK(cudaMalloc((void**)&mtxI_d, currentRank * currentRank * sizeof(float)));
-		multiply_Den_ClmM_mtxT_mtx(cublasHandler, mtxY_d, mtxI_d, numOfRow, currentRank);
+		CHECK(cudaMalloc((void**)&mtxY_cpy_d, numOfRow * currentRank * sizeof(float)));
+	    CHECK(cudaMemcpy(mtxY_cpy_d, mtxY_d, numOfRow * currentRank * sizeof(float), cudaMemcpyDeviceToDevice));
+
+		//After this function mtxY_cpy_d will be free.
+		multiply_Den_ClmM_mtxT_mtx(cublasHandler, mtxY_cpy_d, mtxI_d, numOfRow, currentRank);
+		
 		printf("\n\n~~~~Orthogonality Check (should be close to identity matrix)~~\n\n");
 		print_mtx_clm_d(mtxI_d, currentRank, currentRank);
 		CHECK(cudaFree(mtxI_d));
 	}
 
-	//(5) Free memory
+	//(5)Pass the address to the provided pointer
+	*mtxY_hat_d = mtxY_d;
+
+	if(debug){
+		printf("\n\n~~mtxY hat <- orth(*) ~~\n\n");
+		print_mtx_clm_d(*mtxY_hat_d, numOfRow, currentRank);
+	}
+
+
+	//(6) Free memory
     checkCudaErrors(cusolverDnDestroy(cusolverHandler));
     checkCudaErrors(cublasDestroy(cublasHandler));
 
-    // CHECK(cudaFree(mtxZ_d));
 	CHECK(cudaFree(mtxS_d));
     CHECK(cudaFree(mtxU_d));
     CHECK(cudaFree(sngVals_d));
     CHECK(cudaFree(mtxV_trnc_d));
-
-	return mtxY_d;
 }
 
 //Input: cusolverDnHandler, int number of row, int number of column, int leading dimensino, 
