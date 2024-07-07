@@ -565,9 +565,6 @@ void bfbcg(float* mtxA_d, float* mtxSolX_d, float* mtxB_d, int numOfA, int numOf
 		}
 
 		//To update matrix P
-		//TODO update orth return value as void
-		CHECK(cudaFree(mtxP_d));
-		mtxP_d = NULL;
 		orth(&mtxP_d, mtxZ_d, numOfA, numOfColX, crrntRank);
 		if(debug){
 			printf("\n\n~~ mtxP_d ~~\n\n");
@@ -1037,7 +1034,6 @@ void orth(float** mtxY_hat_d, float* mtxZ_d, int numOfRow, int numOfClm, int &cu
 	}	
 
 	//(4.6) Multiply matrix Y <- matrix Z * matrix V Truncated
-	if(!mtxY_d){cudaFree(mtxY_d);}
 	CHECK(cudaMalloc((void**)&mtxY_d, numOfRow * currentRank * sizeof(float)));
 	multiply_Den_ClmM_mtx_mtx(cublasHandler, mtxZ_d, mtxV_trnc_d, mtxY_d, numOfRow, currentRank, numOfClm);
 	
@@ -1070,7 +1066,9 @@ void orth(float** mtxY_hat_d, float* mtxZ_d, int numOfRow, int numOfClm, int &cu
 		CHECK(cudaFree(mtxI_d));
 	}
 
-	//(5)Pass the address to the provided pointer
+	//(5)Pass the address to the provided pointer, updating orhtonomal set
+	CHECK(cudaFree(*mtxY_hat_d));
+	*mtxY_hat_d = NULL;
 	*mtxY_hat_d = mtxY_d;
 
 	if(debug){
