@@ -1403,7 +1403,7 @@ float* truncate_Den_Mtx(float* mtxV_d, int numOfN, int currentRank)
 
 
 
-
+//TODO use cublasStatus_t  cublasSnrm2(cublasHandle_t handle, int n, const float           *x, int incx, float  *result), which is better I think to normalize
 //Input: float* mtxY, product of matrix Z * matrix U, int number of row, int number of column 
 //Process: the kernel normalize each column vector of matrix Y in 2 norm
 //Output: float* mtxY_d, which will be updated as normalized matrix Y hat.

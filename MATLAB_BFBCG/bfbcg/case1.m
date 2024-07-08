@@ -43,7 +43,7 @@ mtxP = orth(mtxZ, threshold);
 fprintf("\n\n~~mtxP~~\n\n");
 disp(mtxP);
 
-for wkr = 1 : 2
+for wkr = 1 : 5
     %Q <- AP
     mtxQ = mtxA * mtxP;
     fprintf("\n\n~~mtxQ~~\n\n");
