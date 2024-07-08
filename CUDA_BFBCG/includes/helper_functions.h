@@ -195,8 +195,10 @@ float computeConditionNumber(float* mtxA_d, int numOfRow, int numOfClm);
 float* extractSngVals(cusolverDnHandle_t cusolverHandler, int numOfRow, int numOfClm, int ldngDim, float* mtxA_d);
 
 
-
-
+//Input: CSRMatrix &csrMtx, int numOfA, float *dnsMtxX_d, int numClmsB, float *dnsMtxC_d
+//Process: perform R = B - AX, then calculate the first column vector 2 norms
+//Output: float twoNorms
+float validateBFBCG(const CSRMatrix &csrMtx, int numOfA, float *dnsMtxX_d, int numClmsB, float *dnsMtxC_d);
 
 
 
@@ -352,7 +354,9 @@ void validateSol(const float *mtxA_h, const float* x_h, float* rhs, int N)
 void bfbcg(CSRMatrix &csrMtxA, float* mtxSolX_d, float* mtxB_d, int numOfA, int numOfColX)
 {	
 	int crrntRank = numOfColX;
-	bool debug = true;
+	//FIXME THRESHOLD 1e-4~ mtxP is too small.
+	const float THRESHOLD = 1e-6;
+	bool isStop = false;
 
 	float* mtxR_d = NULL; // Residual
 	CSRMatrix csrMtxM = generateSparseIdentityMatrixCSR(numOfA); // Precondtion
@@ -369,11 +373,12 @@ void bfbcg(CSRMatrix &csrMtxA, float* mtxSolX_d, float* mtxB_d, int numOfA, int 
 	float* beta_h = NULL; // sclaler for alpha in case alpha is 1 by 1
 	float* mtxQTZ_d = NULL; // For calculating mtxBta
 
-	
+	bool debug = true;
+
 	//For calculating relative residual during the iteration
 	float orgRsdl_h = 0.0f; // Initial residual
-	// float newRsdl_h = 0.0f; // New residual dring the iteration
-	// float rltvRsdl_h = 0.0f; // Relateive resitual
+	float newRsdl_h = 0.0f; // New residual dring the iteration
+	float rltvRsdl_h = 0.0f; // Relateive resitual
 
 
 	//Crete handler
@@ -401,10 +406,7 @@ void bfbcg(CSRMatrix &csrMtxA, float* mtxSolX_d, float* mtxB_d, int numOfA, int 
 
 	alpha_h = (float*)malloc(sizeof(float));
 	beta_h = (float*)malloc(sizeof(float));
-	// CHECK(cudaMalloc((void**)&orgRsdl_d, sizeof(float)));
-	// CHECK(cudaMalloc((void**)&newRsdl_d, sizeof(float)));
-	// CHECK(cudaMalloc((void**)&rltvRsdl_d, sizeof(float)));
-
+	
 
 	//(2) Copy memory
 	CHECK(cudaMemcpy(mtxR_d, mtxB_d, numOfA * numOfColX * sizeof(float), cudaMemcpyDeviceToDevice));
@@ -415,7 +417,6 @@ void bfbcg(CSRMatrix &csrMtxA, float* mtxSolX_d, float* mtxB_d, int numOfA, int 
 
 
 	//Set up before iterating
-
 	//R <- B - AX
 	den_mtx_subtract_multiply_Sprc_Den_mtx(csrMtxA, mtxSolX_d, numOfColX, mtxR_d);
 	// subtract_multiply_Den_mtx_ngtMtx_Mtx(cublasHandler, mtxA_d, mtxSolX_d, mtxR_d, numOfA, numOfA, numOfColX);
@@ -441,8 +442,6 @@ void bfbcg(CSRMatrix &csrMtxA, float* mtxSolX_d, float* mtxB_d, int numOfA, int 
 
 	//P <- orth(Z), mtxZ will be freed in the function
 	orth(&mtxP_d, mtxZ_d, numOfA, crrntRank, crrntRank);
-	printf("\n\n~~mtxP~~\n\n");
-	print_mtx_clm_d(mtxP_d, numOfA, crrntRank);
 
 	if(debug){
 		printf("\n\n = =  Current Rank: %d = = \n\n", crrntRank);
@@ -452,15 +451,18 @@ void bfbcg(CSRMatrix &csrMtxA, float* mtxSolX_d, float* mtxB_d, int numOfA, int 
 
 	//Start iteration
 	int counter = 1;
-	const int MAX_COUNT = 2;
+	const int MAX_COUNT = 10;
 	while(counter < MAX_COUNT){
+		if(debug){
+			printf("\n\n💫💫💫 Iteration %d 💫💫💫\n\n", counter);
+		}
 		
 		//Q <- AP
 		multiply_Sprc_Den_mtx(csrMtxA, mtxP_d, crrntRank, mtxQ_d);
 		// multiply_Den_ClmM_mtx_mtx(cublasHandler, mtxA_d, mtxP_d, mtxQ_d, numOfA, crrntRank, numOfA);
 		if(debug){
-			printf("\n\n~~csrMtxA~~\n\n");
-			print_CSRMtx(csrMtxA);
+			// printf("\n\n~~csrMtxA~~\n\n");
+			// print_CSRMtx(csrMtxA);
 			printf("\n\n~~mtxQ~~\n\n");
 			print_mtx_clm_d(mtxQ_d, numOfA, crrntRank);
 		}
@@ -489,9 +491,10 @@ void bfbcg(CSRMatrix &csrMtxA, float* mtxSolX_d, float* mtxB_d, int numOfA, int 
     		// CHECK(cudaMalloc((void**)&mtxAlph_d, numOfColX * sizeof(float)));
 			CHECK(cudaMemcpy(mtxAlph_d, mtxPTR_d, numOfColX * sizeof(float), cudaMemcpyDeviceToDevice));
 			CHECK(cudaMemcpy(alpha_h, mtxPTQ_inv_d, sizeof(float), cudaMemcpyDeviceToHost));
-			printf("\n\n = = mtxPTQ_inv_d: %f = = \n", *alpha_h);
-
-			//TODO check
+			if(debug){
+				printf("\n\n = = mtxPTQ_inv_d: %f = = \n", *alpha_h);
+			}
+			
 			// checkCudaErrors(cublasSscal(handle, 3, &alpha, d_B, 1));
 			checkCudaErrors(cublasSscal(cublasHandler, numOfColX, alpha_h, mtxAlph_d, crrntRank));
 			if(debug){
@@ -520,8 +523,19 @@ void bfbcg(CSRMatrix &csrMtxA, float* mtxSolX_d, float* mtxB_d, int numOfA, int 
 			printf("\n\n~~mtxR_d~~\n\n");
 			print_mtx_clm_d(mtxR_d, numOfA, numOfColX);
 		}
+		
+		calculateResidual(cublasHandler, mtxR_d, numOfA, numOfColX, newRsdl_h);
+		rltvRsdl_h = newRsdl_h / orgRsdl_h; // Calculate Relative Residue
+		printf("\n\n🔍🔍🔍Relative Residue: %f🔍🔍🔍\n\n", rltvRsdl_h);
+	
 
 		//If it is converged, then stopped.
+		isStop = checkStop(cublasHandler, mtxR_d, numOfA, numOfColX, THRESHOLD);
+		if(isStop)
+		{
+			printf("\n\n🌀🌀🌀CONVERGED🌀🌀🌀\n\n");
+			break;
+		}
 
 		// Z_{i+1} <- MR_{i+1}
 		multiply_Sprc_Den_mtx(csrMtxM, mtxR_d, numOfColX, mtxZ_d);
@@ -547,9 +561,9 @@ void bfbcg(CSRMatrix &csrMtxA, float* mtxSolX_d, float* mtxB_d, int numOfA, int 
 			// Copy data to mtxBta to overwrite as an answer
 			CHECK(cudaMemcpy(mtxBta_d, mtxQTZ_d, numOfColX * sizeof(float), cudaMemcpyDeviceToDevice));
 			CHECK(cudaMemcpy(beta_h, mtxPTQ_inv_d, crrntRank * sizeof(float), cudaMemcpyDeviceToHost));
-			printf("\n\n = =  mtxPTQ_inv_d: %f = = \n", *beta_h);
+			// printf("\n\n = =  mtxPTQ_inv_d: %f = = \n", *beta_h);
 			*beta_h *= -1.0f;
-			printf("\n\n = =  - mtxPTQ_inv_d: %f = = \n", *beta_h);
+			// printf("\n\n = =  - mtxPTQ_inv_d: %f = = \n", *beta_h);
 
 			//TODO check
 			checkCudaErrors(cublasSscal(cublasHandler, numOfColX, beta_h, mtxBta_d, crrntRank));
@@ -577,8 +591,15 @@ void bfbcg(CSRMatrix &csrMtxA, float* mtxSolX_d, float* mtxB_d, int numOfA, int 
 		//To update matrix P
 		orth(&mtxP_d, mtxZ_d, numOfA, numOfColX, crrntRank);
 		if(debug){
-			printf("\n\n~~ mtxP_d ~~\n\n");
+			printf("\n\n~~ mtxP_d <- orth(*)~~\n\n");
 			print_mtx_clm_d(mtxP_d, numOfA, crrntRank);
+			printf("\n\n= = current Rank: %d = = \n\n", crrntRank);
+		}
+
+		if(crrntRank == 0)
+		{
+			printf("\n\n!!!Current Rank became 0!!!\n\n");
+			break;
 		}
 
 		counter++;
@@ -601,10 +622,7 @@ void bfbcg(CSRMatrix &csrMtxA, float* mtxSolX_d, float* mtxB_d, int numOfA, int 
 	CHECK(cudaFree(mtxQTZ_d));
 	free(alpha_h);
 	free(beta_h);
-	// CHECK(cudaFree(orgRsdl_d));
-	// CHECK(cudaFree(newRsdl_d));
-	// CHECK(cudaFree(rltvRsdl_d));
-
+	
 } // end of bfbcg
 
 
@@ -613,7 +631,6 @@ void bfbcg(CSRMatrix &csrMtxA, float* mtxSolX_d, float* mtxB_d, int numOfA, int 
 
 
 //Stop condition
-//TO DO implement and test isStop, inverse, and sparseMul
 //Input: cublasHandle_t cublasHandler, float* matrix Residual, int number of row, int number of column
 //Process: Extracts the first column vector from the residual matrix,
 // 			Calculate dot product of the first column vector, then compare sqare root of dot product with Threashold
@@ -832,7 +849,6 @@ __global__ void identity_matrix(float* mtxI_d, int N)
 //Output: float* mtxI
 void createIdentityMtx(float* mtxI_d, int N)
 {		
-
 	// Use a 1D block and grid configuration
     int blockSize = 1024; // Number of threads per block
     int gridSize = ceil((float)N * N / blockSize); // Number of blocks needed
@@ -1569,6 +1585,31 @@ float* extractSngVals(cusolverDnHandle_t cusolverHandler, int numOfRow, int numO
 	return sngVals_d;
 
 } // end of extractSngVals
+
+//Input: CSRMatrix &csrMtx, int numOfA, float *dnsMtxX_d, int numClmsB, float *dnsMtxC_d
+//Process: perform R = B - AX, then calculate the first column vector 2 norms
+//Output: float twoNorms
+float validateBFBCG(const CSRMatrix &csrMtx, int numOfA, float *dnsMtxX_d, int numClmsB, float *dnsMtxC_d)
+{
+	bool debug = true;
+	
+	den_mtx_subtract_multiply_Sprc_Den_mtx(csrMtx, dnsMtxX_d, numClmsB, dnsMtxC_d);
+	if(debug){
+		printf("\n\nmtxR = B - AX\n");
+		printf("~~mtxR~~\n\n");
+		print_mtx_clm_d(dnsMtxC_d, numOfA, numClmsB);
+	}
+	
+	cublasHandle_t cublasHandler = NULL;
+	checkCudaErrors(cublasCreate(&cublasHandler));
+
+	float twoNorms = 0.0f;
+	calculateResidual(cublasHandler, dnsMtxC_d, numOfA, numClmsB, twoNorms);
+
+	checkCudaErrors(cublasDestroy(cublasHandler));
+
+	return twoNorms;
+}
 
 
 
