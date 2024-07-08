@@ -45,7 +45,7 @@ void validateSol(const float *mtxA_h, const float* x_h, float* rhs, int N);
 //Input: float* mtxA_d, float* mtxB_d, float* mtxSolX_d, int numOfA, int numOfColX
 //Process: Solve AX = B where A is sparse matrix, X is solutoinn column vectors and B is given column vectors
 //Output: float* mtxSolX_d
-void bfbcg(float* mtxA_d, float* mtxSolX_d, float* mtxB_d, int numOfA, int numOfColX);
+void bfbcg(CSRMatrix &csrMtxA, float* mtxSolX_d, float* mtxB_d, int numOfA, int numOfColX);
 
 
 
@@ -83,12 +83,18 @@ __global__ void identity_matrix(float* mtxI_d, int N);
 void createIdentityMtx(float* mtxI_d, int N);
 
 
+
+
 //Input: const CSRMatrix &csrMtx, float *dnsMtxB_d, int numClmB, float * dnxMtxC_d
 //Process: Matrix Multiplication Sparse matrix and Dense matrix
 //Output: dnsMtxC_d, dense matrix C in device
 void multiply_Sprc_Den_mtx(const CSRMatrix &csrMtx, float *dnsMtxB_d, int numClmsB, float * dnsMtxC_d);
 
 
+//Input: float *dnsMtxB_d, const CSRMatrix &csrMtx, float *dnsMtxX_d, int numClmB, float * dnxMtxC_d
+//Process: perform C = C - AX
+//Output: dnsMtxC_d, dense matrix C in device
+void den_mtx_subtract_multiply_Sprc_Den_mtx(const CSRMatrix &csrMtx, float *dnsMtxX_d, int numClmsB, float *dnsMtxC_d);
 
 
 
@@ -343,7 +349,7 @@ void validateSol(const float *mtxA_h, const float* x_h, float* rhs, int N)
 //Input: float* mtxA_d, float* mtxB_d, float* mtxSolX_d, int numOfA, int numOfColX
 //Process: Solve AX = B where A is sparse matrix, X is solutoinn column vectors and B is given column vectors
 //Output: float* mtxSolX_d
-void bfbcg(float* mtxA_d, float* mtxSolX_d, float* mtxB_d, int numOfA, int numOfColX)
+void bfbcg(CSRMatrix &csrMtxA, float* mtxSolX_d, float* mtxB_d, int numOfA, int numOfColX)
 {	
 	int crrntRank = numOfColX;
 	bool debug = true;
@@ -366,8 +372,8 @@ void bfbcg(float* mtxA_d, float* mtxSolX_d, float* mtxB_d, int numOfA, int numOf
 	
 	//For calculating relative residual during the iteration
 	float orgRsdl_h = 0.0f; // Initial residual
-	float newRsdl_h = 0.0f; // New residual dring the iteration
-	float rltvRsdl_h = 0.0f; // Relateive resitual
+	// float newRsdl_h = 0.0f; // New residual dring the iteration
+	// float rltvRsdl_h = 0.0f; // Relateive resitual
 
 
 	//Crete handler
@@ -409,8 +415,11 @@ void bfbcg(float* mtxA_d, float* mtxSolX_d, float* mtxB_d, int numOfA, int numOf
 
 
 	//Set up before iterating
+
 	//R <- B - AX
-	subtract_multiply_Den_mtx_ngtMtx_Mtx(cublasHandler, mtxA_d, mtxSolX_d, mtxR_d, numOfA, numOfA, numOfColX);
+	den_mtx_subtract_multiply_Sprc_Den_mtx(csrMtxA, mtxSolX_d, numOfColX, mtxR_d);
+	// subtract_multiply_Den_mtx_ngtMtx_Mtx(cublasHandler, mtxA_d, mtxSolX_d, mtxR_d, numOfA, numOfA, numOfColX);
+	
 	if(debug){
 		printf("\n\n~~mtxR~~\n\n");
 		print_mtx_clm_d(mtxR_d, numOfA, numOfColX);
@@ -447,10 +456,11 @@ void bfbcg(float* mtxA_d, float* mtxSolX_d, float* mtxB_d, int numOfA, int numOf
 	while(counter < MAX_COUNT){
 		
 		//Q <- AP
-		multiply_Den_ClmM_mtx_mtx(cublasHandler, mtxA_d, mtxP_d, mtxQ_d, numOfA, crrntRank, numOfA);
+		multiply_Sprc_Den_mtx(csrMtxA, mtxP_d, crrntRank, mtxQ_d);
+		// multiply_Den_ClmM_mtx_mtx(cublasHandler, mtxA_d, mtxP_d, mtxQ_d, numOfA, crrntRank, numOfA);
 		if(debug){
-			printf("\n\n~~mtxA~~\n\n");
-			print_mtx_clm_d(mtxA_d, numOfA, numOfA);
+			printf("\n\n~~csrMtxA~~\n\n");
+			print_CSRMtx(csrMtxA);
 			printf("\n\n~~mtxQ~~\n\n");
 			print_mtx_clm_d(mtxQ_d, numOfA, crrntRank);
 		}
@@ -909,6 +919,71 @@ void multiply_Sprc_Den_mtx(const CSRMatrix &csrMtx, float *dnsMtxB_d, int numClm
 } // end of multiply_Src_Den_mtx
 
 
+
+//Input: float *dnsMtxB_d, const CSRMatrix &csrMtx, float *dnsMtxX_d, int numClmB, float * dnxMtxC_d
+//Process: perform C = C - AX
+//Output: dnsMtxC_d, dense matrix C in device
+void den_mtx_subtract_multiply_Sprc_Den_mtx(const CSRMatrix &csrMtx, float *dnsMtxX_d, int numClmsB, float *dnsMtxC_d) {
+int numRowsA = csrMtx.numOfRows;
+	int numClmsA = csrMtx.numOfClms;
+	int nnz = csrMtx.numOfnz;
+
+	float alpha = -1.0f;
+	float beta = 1.0f;
+
+	bool debug = false;
+
+
+	//(1) Allocate device memoery for CSR matrix
+	int	*row_offsets_d = NULL;
+	int *col_indices_d = NULL;
+	float *vals_d = NULL;
+
+	CHECK(cudaMalloc((void**)&row_offsets_d, (numRowsA + 1) * sizeof(int)));
+	CHECK(cudaMalloc((void**)&col_indices_d, nnz * sizeof(int)));
+	CHECK(cudaMalloc((void**)&vals_d, nnz * sizeof(float)));
+
+	//(2) Copy values from host to device
+	CHECK(cudaMemcpy(row_offsets_d, csrMtx.row_offsets, (numRowsA+1) * sizeof(int), cudaMemcpyHostToDevice));
+	CHECK(cudaMemcpy(col_indices_d, csrMtx.col_indices, nnz * sizeof(int), cudaMemcpyHostToDevice));
+	CHECK(cudaMemcpy(vals_d, csrMtx.vals, nnz * sizeof(float), cudaMemcpyHostToDevice));
+
+	//(3) Crate cuSPARSE handle and descriptors
+	cusparseHandle_t cusparseHandler;
+	cusparseCreate(&cusparseHandler);
+
+	cusparseSpMatDescr_t mtxA;
+	cusparseDnMatDescr_t mtxB, mtxC;
+
+	checkCudaErrors(cusparseCreateCsr(&mtxA, numRowsA, numClmsA, nnz, row_offsets_d, col_indices_d, vals_d, CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I, CUSPARSE_INDEX_BASE_ZERO, CUDA_R_32F));
+	checkCudaErrors(cusparseCreateDnMat(&mtxB, numClmsA, numClmsB, numClmsA, dnsMtxX_d, CUDA_R_32F, CUSPARSE_ORDER_COL));
+	checkCudaErrors(cusparseCreateDnMat(&mtxC, numRowsA, numClmsB, numRowsA, dnsMtxC_d, CUDA_R_32F, CUSPARSE_ORDER_COL));
+
+	//(4) Calculate buffer size of Spase by dense matrix mulply operation
+    size_t bufferSize = 0;
+    void *dBuffer = NULL;
+	checkCudaErrors(cusparseSpMM_bufferSize(cusparseHandler, CUSPARSE_OPERATION_NON_TRANSPOSE, CUSPARSE_OPERATION_NON_TRANSPOSE, &alpha, mtxA, mtxB, &beta, mtxC, CUDA_R_32F, CUSPARSE_SPMM_ALG_DEFAULT, &bufferSize));
+	CHECK(cudaMalloc(&dBuffer, bufferSize));
+
+	//(5)Perform sparse-dense matrix Multiplication
+	checkCudaErrors(cusparseSpMM(cusparseHandler, CUSPARSE_OPERATION_NON_TRANSPOSE, CUSPARSE_OPERATION_NON_TRANSPOSE, &alpha, mtxA, mtxB, &beta, mtxC, CUDA_R_32F, CUSPARSE_SPMM_ALG_DEFAULT, dBuffer));
+
+	if(debug){
+		printf("\n\n~~mtxC after cusparseSpMM~~\n\n");
+		print_mtx_clm_d(dnsMtxC_d, numRowsA, numClmsB);
+	}
+
+	//(6) Free memeory and destroy descriptors
+	checkCudaErrors(cusparseDestroySpMat(mtxA));
+	checkCudaErrors(cusparseDestroyDnMat(mtxB));
+	checkCudaErrors(cusparseDestroyDnMat(mtxC));
+	checkCudaErrors(cusparseDestroy(cusparseHandler));
+
+	CHECK(cudaFree(dBuffer));
+	CHECK(cudaFree(row_offsets_d));
+	CHECK(cudaFree(col_indices_d));
+	CHECK(cudaFree(vals_d));
+} // end ofden_mtx_subtract_multiply_Sprc_Den_mtx
 
 
 
