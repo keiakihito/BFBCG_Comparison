@@ -33,6 +33,12 @@ float* generateSPD_DenseMatrix(int N);
 // N is matrix size
 float* generate_TriDiagMatrix(int N);
 
+//Initialize initial guess matrix as 0.
+void initilizeZero(float mtxSolX_h[], int numOfRow, int numOfClm);
+
+//Initialize given matrix as 1.
+void initilizeOne(float mtxB_h[], int numOfRow, int numOfClm);
+
 //Dense Diagonally doinat SPD matrix 
 float* generateWellConditoinedSPDMatrix(int N);
 
@@ -302,6 +308,21 @@ float* generate_TriDiagMatrix(int N)
 	return mtx_h;
 } // enf of generate_TriDiagMatrix
 
+
+//Initialize initial guess matrix as 0.
+void initilizeZero(float mtxSolX_h[], int numOfRow, int numOfClm)
+{
+	for (int wkr = 0; wkr < numOfRow * numOfClm; wkr++){
+		mtxSolX_h[wkr] = 0.0f;
+	}
+} // end of initializeZero
+
+//Initialize given matrix as 1.
+void initilizeOne(float mtxB_h[], int numOfRow, int numOfClm){
+	for (int wkr = 0; wkr < numOfRow * numOfClm; wkr++){
+		mtxB_h[wkr] = 1.0f;
+	}
+} // end of initializeOne
 
 float* generateWellConditoinedSPDMatrix(int N)
 {
@@ -599,7 +620,7 @@ void bfbcg(CSRMatrix &csrMtxA, float* mtxSolX_d, float* mtxB_d, int numOfA, int 
 
 		if(crrntRank == 0)
 		{
-			printf("\n\n!!!Current Rank became 0!!!\n\n");
+			printf("\n\n!!!Current Rank became 0!!!\n 🔸Exit iteration🔸\n");
 			break;
 		}
 
@@ -1461,7 +1482,7 @@ void normalize_Den_Mtx(float* mtxY_d, int numOfRow, int numOfCol)
 	cudaDeviceSynchronize(); // Ensure the kernel execution completes before proceeding
 }
 
-//Overload function
+//Overloadfunction
 void normalize_Den_Mtx(cublasHandle_t cublasHandler, float* mtxY_d, int numOfRow, int numOfCol)
 {	
 	bool debug = false;
