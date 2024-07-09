@@ -175,7 +175,8 @@ __global__ void normalizeClmVec(float* mtxY_d, int numOfRow, int numOfCol);
 //Output: float* mtxY_d, which will be updated as normalized matrix Y hat.
 void normalize_Den_Mtx(float* mtxY_d, int numOfRow, int numOfCol);
 
-
+//Overload function
+void normalize_Den_Mtx(cublasHandle_t cublasHandler, float* mtxY_d, int numOfRow, int numOfCol);
 
 
 
@@ -1134,7 +1135,8 @@ void orth(float** mtxY_hat_d, float* mtxZ_d, int numOfRow, int numOfClm, int &cu
 	}
 
 	//(4.7) Normalize matrix Y_hat <- normalize_Den_Mtx(mtxY_d)
-	normalize_Den_Mtx(mtxY_d, numOfRow, currentRank);
+	// normalize_Den_Mtx(mtxY_d, numOfRow, currentRank);
+	normalize_Den_Mtx(cublasHandler, mtxY_d, numOfRow, currentRank);
 	if(debug){
 		printf("\n\n~~mtxY hat <- orth(*) ~~\n\n");
 		print_mtx_clm_d(mtxY_d, numOfRow, currentRank);
@@ -1403,7 +1405,7 @@ float* truncate_Den_Mtx(float* mtxV_d, int numOfN, int currentRank)
 
 
 
-//TODO use cublasStatus_t  cublasSnrm2(cublasHandle_t handle, int n, const float           *x, int incx, float  *result), which is better I think to normalize
+
 //Input: float* mtxY, product of matrix Z * matrix U, int number of row, int number of column 
 //Process: the kernel normalize each column vector of matrix Y in 2 norm
 //Output: float* mtxY_d, which will be updated as normalized matrix Y hat.
@@ -1458,6 +1460,35 @@ void normalize_Den_Mtx(float* mtxY_d, int numOfRow, int numOfCol)
     
 	cudaDeviceSynchronize(); // Ensure the kernel execution completes before proceeding
 }
+
+//Overload function
+void normalize_Den_Mtx(cublasHandle_t cublasHandler, float* mtxY_d, int numOfRow, int numOfCol)
+{	
+	bool debug = false;
+	
+	//Make an array for scalars each column vector
+	float* norms_h = (float*)malloc(numOfCol * sizeof(float));
+	
+	//Compute the 2 norms for each column vectors
+	for (int wkr = 0; wkr < numOfCol; wkr++){
+		checkCudaErrors(cublasSnrm2(cublasHandler, numOfRow, mtxY_d + (wkr * numOfRow), 1, &norms_h[wkr]));
+	}
+
+	if(debug){
+		for(int wkr = 0; wkr < numOfCol; wkr++){
+			printf("\ntwoNorm_h %f\n", norms_h[wkr]);
+		}
+	}
+
+	//Normalize each column vector
+	for(int wkr = 0; wkr < numOfCol; wkr++){
+		float scalar = 1.0f / norms_h[wkr];
+		checkCudaErrors(cublasSscal(cublasHandler, numOfRow, &scalar, mtxY_d + (wkr * numOfRow), 1));
+	}
+
+	free(norms_h);
+
+} // end of normalize_Den_Mtx
 
 
 //Input: float* matrix A, int number of Row, int number Of Column
