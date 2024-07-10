@@ -375,6 +375,8 @@ void validateSol(const float *mtxA_h, const float* x_h, float* rhs, int N)
 //Output: float* mtxSolX_d
 void bfbcg(CSRMatrix &csrMtxA, float* mtxSolX_d, float* mtxB_d, int numOfA, int numOfColX)
 {	
+	bool debug = true;
+
 	int crrntRank = numOfColX;
 	//FIXME THRESHOLD 1e-4~ mtxP is too small.
 	const float THRESHOLD = 1e-6;
@@ -395,8 +397,7 @@ void bfbcg(CSRMatrix &csrMtxA, float* mtxSolX_d, float* mtxB_d, int numOfA, int 
 	float* beta_h = NULL; // sclaler for alpha in case alpha is 1 by 1
 	float* mtxQTZ_d = NULL; // For calculating mtxBta
 
-	bool debug = true;
-
+	
 	//For calculating relative residual during the iteration
 	float orgRsdl_h = 0.0f; // Initial residual
 	float newRsdl_h = 0.0f; // New residual dring the iteration
@@ -417,13 +418,13 @@ void bfbcg(CSRMatrix &csrMtxA, float* mtxSolX_d, float* mtxB_d, int numOfA, int 
 	CHECK(cudaMalloc((void**)&mtxR_d, numOfA * crrntRank * sizeof(float)));
 	CHECK(cudaMalloc((void**)&mtxZ_d, numOfA * crrntRank * sizeof(float)));
 	CHECK(cudaMalloc((void**)&mtxQ_d, numOfA * crrntRank * sizeof(float)));
-	CHECK(cudaMalloc((void**)&mtxPTQ_d, sizeof(float)));
-	CHECK(cudaMalloc((void**)&mtxPTQ_inv_d, sizeof(float)));
-	CHECK(cudaMalloc((void**)&mtxPTR_d, crrntRank * sizeof(float)));
+	CHECK(cudaMalloc((void**)&mtxPTQ_d, crrntRank * crrntRank * sizeof(float)));
+	CHECK(cudaMalloc((void**)&mtxPTQ_inv_d, crrntRank * crrntRank * sizeof(float)));
+	CHECK(cudaMalloc((void**)&mtxPTR_d, crrntRank * numOfA * sizeof(float)));
 	CHECK(cudaMalloc((void**)&mtxAlph_d, crrntRank * numOfColX * sizeof(float)));
 	// CHECK(cudaMalloc((void**)&sclAlph_d, sizeof(float)));
 	CHECK(cudaMalloc((void**)&mtxBta_d, crrntRank * numOfColX * sizeof(float)));
-	CHECK(cudaMalloc((void**)&mtxQTZ_d, crrntRank * sizeof(float)));
+	CHECK(cudaMalloc((void**)&mtxQTZ_d, crrntRank * numOfA * sizeof(float)));
 
 
 	alpha_h = (float*)malloc(sizeof(float));
@@ -475,9 +476,10 @@ void bfbcg(CSRMatrix &csrMtxA, float* mtxSolX_d, float* mtxB_d, int numOfA, int 
 	int counter = 1;
 	const int MAX_COUNT = 10;
 	while(counter < MAX_COUNT){
-		if(debug){
-			printf("\n\n💫💫💫 Iteration %d 💫💫💫\n\n", counter);
-		}
+
+		printf("\n\n\n💫💫💫 Iteration %d 💫💫💫 \n", counter);
+		printf("\n= = current Rank: %d = =\n", crrntRank);
+		
 		
 		//Q <- AP
 		multiply_Sprc_Den_mtx(csrMtxA, mtxP_d, crrntRank, mtxQ_d);
@@ -490,11 +492,14 @@ void bfbcg(CSRMatrix &csrMtxA, float* mtxSolX_d, float* mtxB_d, int numOfA, int 
 		}
 
 		//(P'Q)^{-1}, save for the beta calculation
-		multiply_Den_ClmM_mtxT_mtx(cublasHandler, mtxP_d, mtxQ_d, mtxPTQ_d, numOfA, numOfA, crrntRank);
-		inverse_Den_Mtx(cusolverHandler, mtxPTQ_d, mtxPTQ_inv_d, crrntRank);
+		multiply_Den_ClmM_mtxT_mtx(cublasHandler, mtxP_d, mtxQ_d, mtxPTQ_d, numOfA, crrntRank, crrntRank);
 		if(debug){
 			printf("\n\n~~mtxPTQ~~\n\n");
 			print_mtx_clm_d(mtxPTQ_d, crrntRank, crrntRank);
+		}
+
+		inverse_Den_Mtx(cusolverHandler, mtxPTQ_d, mtxPTQ_inv_d, crrntRank);
+		if(debug){
 			printf("\n\n~~mtxPTQ_inv~~\n\n");
 			print_mtx_clm_d(mtxPTQ_inv_d, crrntRank, crrntRank);
 		}
@@ -548,7 +553,7 @@ void bfbcg(CSRMatrix &csrMtxA, float* mtxSolX_d, float* mtxB_d, int numOfA, int 
 		
 		calculateResidual(cublasHandler, mtxR_d, numOfA, numOfColX, newRsdl_h);
 		rltvRsdl_h = newRsdl_h / orgRsdl_h; // Calculate Relative Residue
-		printf("\n\n🔍🔍🔍Relative Residue: %f🔍🔍🔍\n\n", rltvRsdl_h);
+		printf("\n🔍🔍🔍Relative Residue: %f🔍🔍🔍\n\n", rltvRsdl_h);
 	
 
 		//If it is converged, then stopped.
@@ -1066,9 +1071,7 @@ void orth(float** mtxY_hat_d, float* mtxZ_d, int numOfRow, int numOfClm, int &cu
 	const float THREASHOLD = 1e-5;
 
 	bool debug = false;
-
-
-
+	
 
 	if(debug){
 		printf("\n\n~~mtxZ~~\n\n");
@@ -1135,6 +1138,10 @@ void orth(float** mtxY_hat_d, float* mtxZ_d, int numOfRow, int numOfClm, int &cu
 	currentRank = setRank(sngVals_d, currentRank, THREASHOLD);
 	if(debug){
 		printf("\n\n~~ new rank = %d ~~\n\n", currentRank);
+	}
+
+	if(currentRank == 0){
+		debug = false;
 	}
 
 	//(4.5) Truncate matrix V
@@ -1643,7 +1650,7 @@ float* extractSngVals(cusolverDnHandle_t cusolverHandler, int numOfRow, int numO
 //Output: float twoNorms
 float validateBFBCG(const CSRMatrix &csrMtx, int numOfA, float *dnsMtxX_d, int numClmsB, float *dnsMtxC_d)
 {
-	bool debug = true;
+	bool debug = false;
 	
 	den_mtx_subtract_multiply_Sprc_Den_mtx(csrMtx, dnsMtxX_d, numClmsB, dnsMtxC_d);
 	if(debug){
