@@ -41,14 +41,14 @@ int main(int arg, char** argv)
     
     printf("\n\n= = = =bfbcgTest.cu= = = = \n\n");
     
-    // printf("\n\n🔍🔍🔍 Test Case 1 🔍🔍🔍\n\n");
-    // bfbcgTest_Case1();
+    printf("\n\n🔍🔍🔍 Test Case 1 🔍🔍🔍\n\n");
+    bfbcgTest_Case1();
 
     // printf("\n\n🔍🔍🔍 Test Case 2 🔍🔍🔍\n\n");
     // bfbcgTest_Case2();
 
-    printf("\n\n🔍🔍🔍 Test Case 3 🔍🔍🔍\n\n");
-    bfbcgTest_Case3();
+    // printf("\n\n🔍🔍🔍 Test Case 3 🔍🔍🔍\n\n");
+    // bfbcgTest_Case3();
 
     // printf("\n\n🔍🔍🔍 Test Case 4 🔍🔍🔍\n\n");
     // bfbcgTest_Case4();
@@ -60,7 +60,6 @@ int main(int arg, char** argv)
 
     return 0;
 } // end of main
-
 
 
 
@@ -101,6 +100,8 @@ void bfbcgTest_Case1()
     float mtxB_h[] = {1.0, 1.0, 1.0, 1.0, 1.0, 
                     1.0, 1.0, 1.0, 1.0, 1.0,
                     1.0, 1.0, 1.0, 1.0, 1.0};
+
+
 
     bool debug = true;
 
@@ -151,10 +152,102 @@ void bfbcgTest_Case1()
 
 } // end of tranposeTest_Case1
 
-
-
-
 void bfbcgTest_Case2()
+{
+    const int M = 5;
+    const int K = 5;
+    const int N = 3;
+    
+    // float mtxA_h[] = {        
+    //     10.840188, 0.394383, 0.000000, 0.000000, 0.000000,  
+    //     0.394383, 10.783099, 0.798440, 0.000000, 0.000000, 
+    //     0.000000, 0.798440, 10.911648, 0.197551, 0.000000, 
+    //     0.000000, 0.000000, 0.197551, 10.335223, 0.768230, 
+    //     0.000000, 0.000000, 0.000000, 0.768230, 10.277775 
+    // };
+
+    //Sparse matrix 
+    
+    int rowOffSets[] = {0, 2, 5, 8, 11, 13};
+    int colIndices[] = {0, 1, 0, 1, 2, 1, 2, 3, 2, 3, 4, 3, 4};
+    float vals[] = {10.840188, 0.394383, 
+                      0.394383, 10.783099, 0.798440, 
+                      0.798440, 10.911648, 0.197551,
+                      0.197551, 10.335223, 0.768230,
+                      0.768230, 10.277775};
+
+    int nnz = 13;
+
+
+    CSRMatrix csrMtxA_h = constructCSRMatrix(M, K, nnz, rowOffSets, colIndices, vals);
+
+
+    float mtxSolX_h[] = {0, 0, 0, 0, 0, 0,
+                         0, 0, 0, 0, 0, 0,
+                         0, 0, 0, 0, 0, 0};
+
+    // float mtxB_h[] = {1.0, 1.0, 1.0, 1.0, 1.0, 
+    //                 1.0, 1.0, 1.0, 1.0, 1.0,
+    //                 1.0, 1.0, 1.0, 1.0, 1.0};
+
+    float mtxB_h[] = {1.1, 1.2, 1.3, 1.4, 1.5, 
+                    1.6, 1.7, 1.8, 1.9, 2.0,
+                    2.1, 2.2, 2.3, 2.4, 2.5};
+
+
+    bool debug = true;
+
+    //(1) Allocate memory
+    // float* mtxA_d = NULL;
+    float* mtxSolX_d = NULL;
+    float* mtxB_d = NULL;
+
+    // CHECK(cudaMalloc((void**)&mtxA_d,  M * K * sizeof(float)));
+    CHECK(cudaMalloc((void**)&mtxSolX_d,  K * N * sizeof(float)));
+    CHECK(cudaMalloc((void**)&mtxB_d,  M * N * sizeof(float)));
+
+    //(2) Copy value from host to device
+    // CHECK(cudaMemcpy(mtxA_d, mtxA_h, M * K * sizeof(float), cudaMemcpyHostToDevice));
+    CHECK(cudaMemcpy(mtxSolX_d, mtxSolX_h, K * N * sizeof(float), cudaMemcpyHostToDevice));
+    CHECK(cudaMemcpy(mtxB_d, mtxB_h, M * N * sizeof(float), cudaMemcpyHostToDevice));
+
+    if(debug){
+        printf("\n\n~~csrMtxA_h~~\n\n");
+        print_CSRMtx(csrMtxA_h);
+        printf("\n\n~~mtxSolX~~\n\n");
+        print_mtx_clm_d(mtxSolX_d, K, N);
+        printf("\n\n~~mtxB~~\n\n");
+        print_mtx_clm_d(mtxB_d, M, N);
+    }
+
+    //Solve AX = B with bfbcg method
+    bfbcg(csrMtxA_h, mtxSolX_d, mtxB_d, M, N);
+
+    if(debug){
+        printf("\n\n~~📝📝📝Approximate Solution Marix📝📝📝~~\n\n");
+        print_mtx_clm_d(mtxSolX_d, K, N);
+    }
+
+    //Validate
+    //R = B - AX
+    printf("\n\n~~🔍👀Validate Solution Matrix X 🔍👀~~");
+    float twoNorms = validateBFBCG(csrMtxA_h, M, mtxSolX_d, N, mtxB_d);
+    printf("\n\n= = 1st Column Vector 2 norms: %f = =\n\n", twoNorms);
+
+
+    //()Free memeory
+    freeCSRMatrix(csrMtxA_h);
+    CHECK(cudaFree(mtxSolX_d));
+    CHECK(cudaFree(mtxB_d));
+
+
+
+} // end of tranposeTest_Case2
+
+
+
+
+void bfbcgTest_Case3()
 {   
     bool debug = false;
 
@@ -262,12 +355,12 @@ void bfbcgTest_Case2()
     CHECK(cudaFree(mtxSolX_d));
     CHECK(cudaFree(mtxB_d));
 
-} // end of tranposeTest_Case2
+} // end of tranposeTest_Case3
 
 
 
 
-void bfbcgTest_Case3()
+void bfbcgTest_Case4()
 {
     bool debug = false;
 
@@ -387,16 +480,7 @@ void bfbcgTest_Case3()
     CHECK(cudaFree(mtxSolX_d));
     CHECK(cudaFree(mtxB_d));
   
-} // end of tranposeTest_Case3
-
-
-
-
-void bfbcgTest_Case4()
-{
-
 } // end of tranposeTest_Case4
-
 
 
 
