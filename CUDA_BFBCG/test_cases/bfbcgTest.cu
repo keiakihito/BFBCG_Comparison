@@ -692,8 +692,5 @@ mtxR = B - AX
 = = 1st Column Vector 2 norms: 0.000000 = =
 
 
-
-= = = = end of bfbcgTest = = = =
-
 = = = = end of bfbcgTest = = = =
 */
